@@ -1,0 +1,36 @@
+# Paper-related files (not project code)
+AAAI_*/
+*.pdf
+*.pptx
+ppt_figures/
+literature/
+docs/
+output.txt
+create_ppt.py
+draw_architecture.py
+update_ppt.py
+update_ppt_text.py
+*.txt
+KGLMF/paper/
+
+# Models and large data
+codebert_local/
+
+# Claude config
+.claude/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Checkpoints and results (large files)
+KGLMF/checkpoints*/
+KGLMF/checkpoints_*/
+KGLMF/results*/
+KGLMF/results_*/
+KGLMF/experiments/data/
+KGLMF/experiments/results/
+KGLMF/experiments/scripts/results_*/
+
+# Conda/pip
+*.egg-info/

@@ -1,0 +1,36 @@
+model:
+  d_model: 4096
+  backbone: "deepseek-v4-pro"
+
+composer:
+  n_layers: 4
+  n_heads: 32
+  n_learnable_queries: 16
+  lora_rank: 64
+  lora_alpha: 128
+
+router:
+  temperature: 0.1
+
+tts:
+  budget_min: 4
+  budget_max: 64
+  scaling_factor: 2.0
+
+evolution:
+  merge_threshold: 0.85
+  prune_percentile: 10.0
+  temporal_decay_beta: 0.01
+
+injection:
+  layers: [0, 8, 16]
+
+evaluation:
+  max_samples_per_dataset: 200
+  temperature: 0.0
+  max_tokens: 4096
+
+roles:
+  - planner
+  - coder
+  - critic
