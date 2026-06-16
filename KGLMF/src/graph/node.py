@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Optional
 import torch
 
 class NodeType(Enum):
@@ -13,6 +14,7 @@ class Node:
     id: str
     node_type: NodeType
     embedding: torch.Tensor
+    latent_tokens: Optional[torch.Tensor] = None
     role: str = "generic"
     task_id: str = ""
     timestamp: float = 0.0
@@ -20,9 +22,11 @@ class Node:
     access_count: int = 0
     metadata: dict = field(default_factory=dict)
 
-    # FIX #1: Store original text for memory serialization
-    question: str = ""
-    answer: str = ""
+    def __post_init__(self) -> None:
+        if self.latent_tokens is None:
+            self.latent_tokens = self.embedding.unsqueeze(0)
+        elif self.latent_tokens.dim() == 1:
+            self.latent_tokens = self.latent_tokens.unsqueeze(0)
 
     def to_dict(self) -> dict:
         return {
@@ -32,14 +36,8 @@ class Node:
             "access_count": self.access_count, "metadata": self.metadata,
         }
 
-    def get_text(self) -> str:
-        """FIX #1: Serialize stored text for prompt augmentation."""
-        parts = []
-        if self.question:
-            parts.append(f"Q: {self.question[:200]}")
-        if self.answer:
-            parts.append(f"A: {self.answer[:200]}")
-        return " | ".join(parts) if parts else ""
+    def get_latent_tokens(self) -> torch.Tensor:
+        return self.latent_tokens if self.latent_tokens is not None else self.embedding.unsqueeze(0)
 
     @property
     def dim(self) -> int:

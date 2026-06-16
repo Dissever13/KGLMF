@@ -35,6 +35,23 @@ class EmbeddingAdapter(nn.Module):
         return x + self.scale * self.adapter(x)
 
 
+class LatentToHiddenAdapter(nn.Module):
+    """Project KG-LMF latent tokens into an LLM hidden-state space."""
+    def __init__(self, d_model: int = 384, hidden_dim: int = 4096):
+        super().__init__()
+        self.adapter = nn.Sequential(
+            nn.Linear(d_model, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+            nn.GELU(),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LayerNorm(hidden_dim),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.adapter(x)
+
+
 class LatentInjector(nn.Module):
     """Memory injection with optional dynamic gating.
 
@@ -44,9 +61,11 @@ class LatentInjector(nn.Module):
 
     def __init__(self, d_model: int = 384,
                  injection_layers: List[int] = None,
-                 use_adapter: bool = True):
+                 use_adapter: bool = True,
+                 hidden_dim: Optional[int] = None):
         super().__init__()
         self.d_model = d_model
+        self.hidden_dim = hidden_dim or d_model
         self.injection_layers = injection_layers or [0, 8, 16]  # FIX #6
         self.use_adapter = use_adapter
 
@@ -62,22 +81,29 @@ class LatentInjector(nn.Module):
             for layer in self.injection_layers
         })
 
-        # Memory projection (FIX #2: adapter or linear)
-        if use_adapter:
-            self.memory_proj = nn.ModuleDict({
-                str(layer): EmbeddingAdapter(d_model, hidden_dim=512)
-                for layer in self.injection_layers
-            })
-        else:
-            self.memory_proj = nn.ModuleDict({
-                str(layer): nn.Linear(d_model, d_model, bias=False)
-                for layer in self.injection_layers
-            })
+        self.memory_proj = self._build_memory_proj()
 
-        # Initialize
-        for proj in self.memory_proj.values():
-            if isinstance(proj, nn.Linear):
-                nn.init.xavier_uniform_(proj.weight)
+    def _make_projection(self) -> nn.Module:
+        if self.hidden_dim != self.d_model:
+            return LatentToHiddenAdapter(self.d_model, self.hidden_dim)
+        if self.use_adapter:
+            return EmbeddingAdapter(self.d_model, hidden_dim=512)
+        proj = nn.Linear(self.d_model, self.hidden_dim, bias=False)
+        nn.init.xavier_uniform_(proj.weight)
+        return proj
+
+    def _build_memory_proj(self) -> nn.ModuleDict:
+        return nn.ModuleDict({
+            str(layer): self._make_projection()
+            for layer in self.injection_layers
+        })
+
+    def set_hidden_dim(self, hidden_dim: int) -> None:
+        """Rebuild memory projections for a concrete LLM hidden size."""
+        if hidden_dim == self.hidden_dim:
+            return
+        self.hidden_dim = hidden_dim
+        self.memory_proj = self._build_memory_proj()
 
     def _compute_gate(self, layer: int,
                       confidence: Optional[float] = None) -> torch.Tensor:
@@ -120,10 +146,28 @@ class LatentInjector(nn.Module):
             return hidden_states
 
         # Project memory to LLM-compatible space (FIX #2: adapter)
-        projected_memory = self.memory_proj[layer_key](memory_tokens)
+        proj = self.memory_proj[layer_key]
+        first_param = next(proj.parameters(), None)
+        proj_device = first_param.device if first_param is not None else hidden_states.device
+        proj_dtype = first_param.dtype if first_param is not None else hidden_states.dtype
+        memory_tokens = memory_tokens.to(device=proj_device, dtype=proj_dtype)
+        projected_memory = proj(memory_tokens).to(
+            device=hidden_states.device,
+            dtype=hidden_states.dtype,
+        )
+
+        if projected_memory.shape[-1] != hidden_states.shape[-1]:
+            raise ValueError(
+                f"Projected memory dim {projected_memory.shape[-1]} does not match "
+                f"hidden dim {hidden_states.shape[-1]}; initialize LatentInjector "
+                f"with hidden_dim={hidden_states.shape[-1]}"
+            )
 
         # Compute gate (FIX #5: dynamic)
-        gate = self._compute_gate(layer_idx, confidence)
+        gate = self._compute_gate(layer_idx, confidence).to(
+            device=hidden_states.device,
+            dtype=hidden_states.dtype,
+        )
 
         # Cross-attention: hidden states attend to projected memory
         if hidden_states.dim() == 3:

@@ -17,6 +17,7 @@ class DeepSeekClient:
     def generate(self, system_prompt: str, user_message: str,
                 history: List[Dict[str, str]] = None,
                 latent_memory: torch.Tensor = None,
+                confidence: float = None,
                 temperature: float = 0.0,
                 max_tokens: int = None,
                 max_retries: int = 3) -> str:

@@ -58,32 +58,42 @@ class LatentReasoningGraph:
         role: str = "generic",
         task_id: str = "",
         metadata: Optional[dict] = None,
-        question: str = "",
-        answer: str = "",
     ) -> str:
         """Create a new node and insert it into the graph.
 
-        FIX #1: Stores question/answer text for memory serialization.
-        FIX #4: Edge-aware retrieval via neighbor expansion.
+        The stored memory is latent, not text.  A caller may pass either a
+        single ``(d_model,)`` latent vector or a full ``(n_tokens, d_model)``
+        composed memory block.  Retrieval scores use the pooled embedding while
+        composition consumes the full latent token block.
         """
         node_id = f"n_{self._next_id}"
         self._next_id += 1
 
-        if embedding.shape[0] != self.d_model:
+        latent_tokens = embedding.detach().clone()
+        if latent_tokens.dim() == 1:
+            pooled_embedding = latent_tokens
+            latent_tokens = latent_tokens.unsqueeze(0)
+        elif latent_tokens.dim() == 2:
+            pooled_embedding = latent_tokens.mean(dim=0)
+        else:
             raise ValueError(
-                f"Embedding dim {embedding.shape[0]} != d_model {self.d_model}"
+                f"Latent memory must be rank 1 or 2, got shape {tuple(embedding.shape)}"
+            )
+
+        if pooled_embedding.shape[0] != self.d_model:
+            raise ValueError(
+                f"Embedding dim {pooled_embedding.shape[0]} != d_model {self.d_model}"
             )
 
         node = Node(
             id=node_id,
             node_type=node_type,
-            embedding=embedding.detach().clone(),
+            embedding=pooled_embedding.detach().clone(),
+            latent_tokens=latent_tokens.detach().clone(),
             role=role,
             task_id=task_id,
             timestamp=time.time(),
             metadata=metadata if metadata is not None else {},
-            question=question,
-            answer=answer,
         )
         self.nodes[node_id] = node
         return node_id

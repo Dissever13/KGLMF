@@ -32,11 +32,11 @@ class MemoryComposer(nn.Module):
         combined = torch.stack([
             capability_ctx, trajectory, knowledge
         ], dim=0).unsqueeze(0)
-        pooled = F.scaled_dot_product_attention(
+        latent_tokens = F.scaled_dot_product_attention(
             self.pool_queries, combined, combined
-        ).squeeze(0).mean(dim=0)
+        ).squeeze(0)
         node_type = self._role_to_node_type(role)
-        return graph.add_node(pooled, node_type, role=role, task_id=task_id)
+        return graph.add_node(latent_tokens, node_type, role=role, task_id=task_id)
 
     def compose(self, query: torch.Tensor, graph: LatentReasoningGraph,
                 k: int, role: str = "planner") -> torch.Tensor:
@@ -58,10 +58,19 @@ class MemoryComposer(nn.Module):
         scores = self.graph_ops.scoring_function(role_query, all_embeddings)
         top_k = self.graph_ops.top_k_retrieval(scores, node_ids, k)
 
-        retrieved_embs = torch.stack([
-            graph.get_node(nid).embedding.to(device)
-            for nid, _ in top_k
-        ]).unsqueeze(0)
+        retrieved_tokens = []
+        for nid, _ in top_k:
+            node = graph.get_node(nid)
+            tokens = node.get_latent_tokens().to(device)
+            if tokens.dim() == 1:
+                tokens = tokens.unsqueeze(0)
+            retrieved_tokens.append(tokens)
+
+        if not retrieved_tokens:
+            return torch.zeros(self.n_learnable_queries, self.d_model,
+                              device=device)
+
+        retrieved_embs = torch.cat(retrieved_tokens, dim=0).unsqueeze(0)
 
         # Ensure pool_queries on correct device
         pool_q = self.pool_queries.to(device)

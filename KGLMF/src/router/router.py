@@ -59,15 +59,17 @@ class GraphRouter(nn.Module):
 
         for nid, score, emb in results:
             # Get neighbors via outgoing edges
-            if nid in graph.edges:
-                for neighbor_id, edge in graph.edges[nid].items():
-                    if neighbor_id not in seen_ids and len(expanded) < k * 2:
-                        neighbor = graph.get_node(neighbor_id)
-                        if neighbor is not None:
-                            # Neighbor score = edge_weight × source score
-                            neighbor_score = edge.weight * score * 0.8
-                            expanded.append((neighbor_id, neighbor_score, neighbor.embedding))
-                            seen_ids.add(neighbor_id)
+            for (source_id, _target_id), edge in graph.edges.items():
+                if source_id != nid:
+                    continue
+                neighbor_id = edge.target_id
+                if neighbor_id not in seen_ids and len(expanded) < k * 2:
+                    neighbor = graph.get_node(neighbor_id)
+                    if neighbor is not None:
+                        # Neighbor score = edge_weight * source score
+                        neighbor_score = edge.weight * score * 0.8
+                        expanded.append((neighbor_id, neighbor_score, neighbor.embedding))
+                        seen_ids.add(neighbor_id)
 
         # Sort by score, keep top results
         expanded.sort(key=lambda x: x[1], reverse=True)

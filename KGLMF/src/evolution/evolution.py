@@ -32,8 +32,17 @@ class GraphEvolution:
                     ).item()
                     if sim > self.merge_threshold:
                         total_util = ni.utility + nj.utility
-                        ni.embedding = (ni.embedding * ni.utility +
-                                       nj.embedding * nj.utility) / max(total_util, 1e-8)
+                        if ni.get_latent_tokens().shape == nj.get_latent_tokens().shape:
+                            ni.latent_tokens = (
+                                ni.get_latent_tokens() * ni.utility +
+                                nj.get_latent_tokens() * nj.utility
+                            ) / max(total_util, 1e-8)
+                        else:
+                            ni.latent_tokens = torch.cat([
+                                ni.get_latent_tokens(),
+                                nj.get_latent_tokens(),
+                            ], dim=0)
+                        ni.embedding = ni.latent_tokens.mean(dim=0)
                         ni.utility = total_util
                         ni.access_count += nj.access_count
                         merged.add(nj.id)
@@ -66,13 +75,15 @@ class GraphEvolution:
         role_to_type = {"planner": NodeType.ROLE, "coder": NodeType.TRAJECTORY,
                        "critic": NodeType.CONTEXT}
         node_type = role_to_type.get(role, NodeType.CAPSULE)
+        new_tokens = new_embedding if new_embedding.dim() == 2 else new_embedding.unsqueeze(0)
+        new_pooled = new_tokens.mean(dim=0)
         new_id = graph.add_node(new_embedding, node_type, role=role, task_id=task_id)
 
         for nid, node in graph.nodes.items():
             if nid == new_id:
                 continue
             sim = F.cosine_similarity(
-                new_embedding.unsqueeze(0), node.embedding.unsqueeze(0)
+                new_pooled.unsqueeze(0), node.embedding.unsqueeze(0)
             ).item()
             if sim > edge_threshold:
                 graph.add_edge(new_id, nid, sim, "semantic")

@@ -61,6 +61,7 @@ from src.composer.composer import MemoryComposer
 from src.router.router import GraphRouter
 from src.router.tts import AdaptiveTTSController
 from src.injection.injector import LatentInjector
+from src.api.local_llm import LocalLLM
 from data_utils import load_all_train  # Shared train/test split (FIX #4)
 
 
@@ -76,7 +77,8 @@ class OllamaFeedback:
         self.host = host
         self._embedder = None
 
-    def generate(self, system: str, prompt: str, temperature=0.0, max_tokens=512) -> str:
+    def generate(self, system: str, prompt: str, temperature=0.0, max_tokens=512,
+                 latent_memory=None, confidence=None) -> str:
         """Ollama call with timeout, retry, and inter-call delay to prevent overload."""
         payload = {
             'model': self.model, 'system': system, 'prompt': prompt,
@@ -423,6 +425,8 @@ def collect_llm_feedback(samples: List[Dict], embedder,
         node = graph.get_node(nid)
         if node.embedding.device.type != 'cpu':
             node.embedding = node.embedding.cpu()
+        if node.latent_tokens.device.type != 'cpu':
+            node.latent_tokens = node.latent_tokens.cpu()
 
     k_values = [2, 4, 6, 8]
     save_every = 50  # Incremental save every 50 samples
@@ -435,9 +439,15 @@ def collect_llm_feedback(samples: List[Dict], embedder,
         task_type = sample['task_type']
         q_emb = embedder(q)
         combined_emb = (q_emb + embedder(a_true[:500])) / 2
-        # FIX #1: Store text in graph node for memory serialization
-        graph.add_node(combined_emb, NodeType.CONTEXT, role=task_type,
-                       question=q, answer=a_true)
+        with torch.no_grad():
+            if len(graph) > 0:
+                latent_node = composer.compose(
+                    combined_emb, graph, min(4, len(graph)), task_type)
+                if latent_node.sum() == 0:
+                    latent_node = combined_emb.unsqueeze(0)
+            else:
+                latent_node = combined_emb.unsqueeze(0)
+        graph.add_node(latent_node.detach().cpu(), NodeType.CONTEXT, role=task_type)
 
         if idx < start_idx:
             continue  # Skip already-completed LLM calls
@@ -460,25 +470,15 @@ def collect_llm_feedback(samples: List[Dict], embedder,
             if memory_tokens.sum() == 0:
                 continue
 
-            # FIX #2: Serialize retrieved node text as LLM context
-            memory_text = ""
-            for nid, score, emb in retrieved[:5]:
-                node = graph.get_node(nid)
-                t = node.get_text()
-                if t:
-                    memory_text += t + "\n"
-            if memory_text:
-                memory_text = "[Memory]\n" + memory_text + "\n"
-
-            # Run multi-agent WITH memory text prepended
+            # Run multi-agent with latent memory injection when the backend supports it.
             context = ""
             final_answer = ""
             for role in roles:
                 prompt = ROLE_PROMPTS_FEEDBACK.get(role, SIMPLE_PROMPT)
-                full_task = (memory_text + q) if memory_text else q
+                full_task = q
                 if context and role != roles[0]:
-                    full_task = memory_text + f"Previous: {context[:300]}\n\n{q}"
-                resp = llm.generate(prompt, full_task)
+                    full_task = f"Previous: {context[:300]}\n\n{q}"
+                resp = llm.generate(prompt, full_task, latent_memory=memory_tokens)
                 context = resp
                 final_answer = resp
 
@@ -669,6 +669,7 @@ def train_composer_with_scorer(
     for nid in graph.get_node_ids():
         node = graph.get_node(nid)
         node.embedding = node.embedding.to(device)
+        node.latent_tokens = node.latent_tokens.to(device)
     # Also convert feedback tensors to device (loaded from CPU disk saves)
     for f in feedback_data:
         if 'query_emb' in f and f['query_emb'].device != torch.device(device):
@@ -702,6 +703,8 @@ def train_composer_with_scorer(
                     node = graph.get_node(nid)
                     if node.embedding.device != torch.device(device):
                         node.embedding = node.embedding.to(device)
+                    if node.latent_tokens.device != torch.device(device):
+                        node.latent_tokens = node.latent_tokens.to(device)
             if k < 2:
                 continue
 
@@ -719,6 +722,17 @@ def train_composer_with_scorer(
             # ── FIX #1: Scorer-based loss (maximize predicted delta) ──
             predicted_delta = scorer(q_emb, memory_tokens)
             scorer_loss = -predicted_delta.mean()  # maximize predicted improvement
+            router_scores = router.score_nodes(q_emb, graph)
+            if router_scores.numel() > 0:
+                router_top_mass = torch.topk(router_scores, min(k, router_scores.numel())).values.sum()
+                router_target = torch.tensor(
+                    max(0.0, min(1.0, (float(f.get('accuracy_delta', 0.0)) + 1.0) / 2.0)),
+                    dtype=router_scores.dtype,
+                    device=router_scores.device,
+                )
+                router_loss = F.mse_loss(router_top_mass, router_target)
+            else:
+                router_loss = torch.tensor(0.0, device=device)
 
             # ── FIX #3: Hard negative contrastive ──
             hard_neg = hard_neg_sampler.sample_hard_negative(task_type, q_emb)
@@ -745,7 +759,7 @@ def train_composer_with_scorer(
                                        torch.tensor(target_gate, device=device))
 
             # ── Combined loss ──
-            total_loss = scorer_loss + 0.1 * contrastive_loss + 0.05 * gate_loss
+            total_loss = scorer_loss + 0.1 * contrastive_loss + 0.05 * gate_loss + 0.05 * router_loss
 
             optimizer.zero_grad()
             total_loss.backward()
@@ -844,6 +858,9 @@ def main():
                         default=os.path.join(os.path.dirname(__file__), '..', 'data'))
     parser.add_argument('--device', type=str, default='cpu')
     parser.add_argument('--model', type=str, default='llama3.1:8b')
+    parser.add_argument('--llm_backend', choices=['ollama', 'local'], default='ollama')
+    parser.add_argument('--local_model_path', type=str, default=None,
+                        help='Local Hugging Face model directory for hidden-state injection')
     parser.add_argument('--skip_feedback', action='store_true',
                         help='Skip LLM feedback (use existing data)')
     args = parser.parse_args()
@@ -873,7 +890,25 @@ def main():
         emb = embedder_obj.encode(text[:2000], normalize_embeddings=True)
         return torch.from_numpy(emb.astype(np.float32))
 
-    llm = OllamaFeedback(model=args.model)
+    # Initialize components (or load from checkpoint if exists)
+    composer = MemoryComposer(d_model=d_model, n_heads=8, n_layers=4)
+    router = GraphRouter(d_model=d_model)
+    injector = DynamicGateInjector(d_model=d_model, injection_layers=[0, 8, 16])
+    llm_injector = LatentInjector(d_model=d_model, injection_layers=[0, 8, 16])
+    graph = LatentReasoningGraph(d_model=d_model)
+    scorer = MemoryScorer(d_model=d_model)
+
+    if args.llm_backend == 'local':
+        llm = LocalLLM(
+            model_path=args.local_model_path,
+            model_name=args.model,
+            injector=llm_injector,
+            d_model=d_model,
+            injection_layers=[0, 8, 16],
+            device=device,
+        )
+    else:
+        llm = OllamaFeedback(model=args.model)
 
     # Load training data (FIX #4: all 9 datasets, train split only, zero overlap with test)
     all_train_samples = load_all_train()
@@ -887,18 +922,12 @@ def main():
           f"(baselines pre-computed once for all, ~2.5h)")
 
     # ── Pre-warm Ollama ──
-    print("\n  Pre-warming Ollama...")
+    backend_name = "LocalLLM" if args.llm_backend == 'local' else "Ollama"
+    print(f"\n  Pre-warming {backend_name}...")
     sys.stdout.flush()
     warm_resp = llm.generate("", "Say OK", max_tokens=5)
-    print(f"  Warm-up: '{warm_resp}' — Ollama ready")
+    print(f"  Warm-up: '{warm_resp}' - {backend_name} ready")
     sys.stdout.flush()
-
-    # Initialize components (or load from checkpoint if exists)
-    composer = MemoryComposer(d_model=d_model, n_heads=8, n_layers=4)
-    router = GraphRouter(d_model=d_model)
-    injector = DynamicGateInjector(d_model=d_model, injection_layers=[0, 8, 16])
-    graph = LatentReasoningGraph(d_model=d_model)
-    scorer = MemoryScorer(d_model=d_model)
 
     # Try to load latest checkpoint to continue training
     latest_ckpt = None
@@ -914,8 +943,10 @@ def main():
         router.load_state_dict(ckpt['router'])
         injector.load_state_dict(ckpt['injector'], strict=False)
         scorer.load_state_dict(ckpt['scorer'])
-        for nid, emb, ntype in ckpt.get('graph_nodes', []):
-            graph.add_node(emb, NodeType(ntype))
+        for item in ckpt.get('graph_nodes', []):
+            if len(item) >= 3:
+                _nid, latent_tokens, ntype = item[:3]
+                graph.add_node(latent_tokens, NodeType(ntype))
         start_iteration = int(latest_ckpt.split('_iter')[-1].replace('.pt', ''))
         print(f"  Loaded checkpoint: {latest_ckpt} (resuming from iter {start_iteration+1})")
 
@@ -951,6 +982,7 @@ def main():
         for nid in graph.get_node_ids():
             node = graph.get_node(nid)
             node.embedding = node.embedding.cpu()
+            node.latent_tokens = node.latent_tokens.cpu()
 
         print(f"\n{'#'*70}")
         print(f"# ITERATION {iteration+1}/{args.n_iterations} "
@@ -1023,7 +1055,7 @@ def save_checkpoint(path: str, composer, router, injector, scorer, graph):
         'router': router.state_dict(),
         'injector': injector.state_dict(),
         'scorer': scorer.state_dict(),
-        'graph_nodes': [(nid, node.embedding, node.node_type.value)
+        'graph_nodes': [(nid, node.get_latent_tokens().cpu(), node.node_type.value)
                        for nid, node in graph.nodes.items()],
         'graph_edges': [(src, dst, edge.weight, edge.edge_type.value)
                        for src, dst, edge in graph.edges.items()],
