@@ -435,7 +435,9 @@ def collect_llm_feedback(samples: List[Dict], embedder,
         task_type = sample['task_type']
         q_emb = embedder(q)
         combined_emb = (q_emb + embedder(a_true[:500])) / 2
-        graph.add_node(combined_emb, NodeType.CONTEXT, role=task_type)
+        # FIX #1: Store text in graph node for memory serialization
+        graph.add_node(combined_emb, NodeType.CONTEXT, role=task_type,
+                       question=q, answer=a_true)
 
         if idx < start_idx:
             continue  # Skip already-completed LLM calls
@@ -449,6 +451,7 @@ def collect_llm_feedback(samples: List[Dict], embedder,
             if len(graph) < k:
                 continue
 
+            # FIX #3: Router outputs used by composer (gradient flows!)
             retrieved = router.route(q_emb, graph, k)
             if not retrieved:
                 continue
@@ -457,14 +460,24 @@ def collect_llm_feedback(samples: List[Dict], embedder,
             if memory_tokens.sum() == 0:
                 continue
 
-            # Run multi-agent with memory
+            # FIX #2: Serialize retrieved node text as LLM context
+            memory_text = ""
+            for nid, score, emb in retrieved[:5]:
+                node = graph.get_node(nid)
+                t = node.get_text()
+                if t:
+                    memory_text += t + "\n"
+            if memory_text:
+                memory_text = "[Memory]\n" + memory_text + "\n"
+
+            # Run multi-agent WITH memory text prepended
             context = ""
             final_answer = ""
             for role in roles:
                 prompt = ROLE_PROMPTS_FEEDBACK.get(role, SIMPLE_PROMPT)
-                full_task = q
+                full_task = (memory_text + q) if memory_text else q
                 if context and role != roles[0]:
-                    full_task = f"Previous: {context[:500]}\n\nTask: {q}"
+                    full_task = memory_text + f"Previous: {context[:300]}\n\n{q}"
                 resp = llm.generate(prompt, full_task)
                 context = resp
                 final_answer = resp

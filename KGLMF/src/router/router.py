@@ -40,4 +40,35 @@ class GraphRouter(nn.Module):
             node = graph.get_node(nid)
             node.access_count += 1
             results.append((nid, top_scores[j].item(), node.embedding))
+
+        # FIX #4: Edge-aware neighbor expansion
+        results = self._expand_neighbors(results, graph, k)
+
         return results
+
+    def _expand_neighbors(self, results: list, graph: LatentReasoningGraph,
+                          k: int) -> list:
+        """FIX #4: Expand retrieved nodes with 1-hop graph neighbors.
+
+        Graph edges encode meaningful relationships. Nodes connected by edges
+        to top-scoring nodes are likely relevant even if not top-k by similarity.
+        This makes the graph topology actually matter for retrieval.
+        """
+        seen_ids = {r[0] for r in results}
+        expanded = list(results)
+
+        for nid, score, emb in results:
+            # Get neighbors via outgoing edges
+            if nid in graph.edges:
+                for neighbor_id, edge in graph.edges[nid].items():
+                    if neighbor_id not in seen_ids and len(expanded) < k * 2:
+                        neighbor = graph.get_node(neighbor_id)
+                        if neighbor is not None:
+                            # Neighbor score = edge_weight × source score
+                            neighbor_score = edge.weight * score * 0.8
+                            expanded.append((neighbor_id, neighbor_score, neighbor.embedding))
+                            seen_ids.add(neighbor_id)
+
+        # Sort by score, keep top results
+        expanded.sort(key=lambda x: x[1], reverse=True)
+        return expanded[:max(k, len(results))]

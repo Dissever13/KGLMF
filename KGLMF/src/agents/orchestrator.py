@@ -101,7 +101,28 @@ class Orchestrator:
                 confidence = max(-1.0, min(1.0, confidence))
 
         compressed = self.composer.compress(memory_tokens, budget)
-        return compressed, confidence
+
+        # FIX #1: Serialize retrieved nodes as text context
+        memory_text = self._serialize_memory(retrieved)
+
+        return compressed, confidence, memory_text
+
+    def _serialize_memory(self, retrieved: list) -> str:
+        """FIX #1: Convert retrieved graph nodes into text context for LLM prompt.
+
+        This is the KEY fix: instead of dropping latent memory tokens,
+        we serialize the actual stored text from relevant graph nodes
+        and prepend it to the LLM prompt. This makes memory REAL.
+        """
+        texts = []
+        for nid, score, emb in retrieved:
+            node = self.graph.get_node(nid)
+            t = node.get_text()
+            if t:
+                texts.append(t)
+        if texts:
+            return "[Memory]\n" + "\n".join(texts[:5]) + "\n\n"
+        return ""
 
     # ── Agent Execution ───────────────────────────────
 
@@ -109,23 +130,26 @@ class Orchestrator:
                    prompt: str = "") -> str:
         """Run a single agent with memory-augmented generation.
 
-        KEY: Latent memory replaces text context between agents.
-        No verbose "PREVIOUS OUTPUT" text — memory injection provides inter-agent communication.
-        This dramatically reduces KG-LMF's LLM token consumption.
+        FIX #1: Retrieved graph text is prepended to prompt — memory is REAL.
+        FIX #2: Confidence from scorer modulates how much memory text to include.
         """
         agent = self._get_or_create_agent(role, prompt)
-        memory_tokens, confidence = self.get_memory_tokens(task, role)
+        memory_tokens, confidence, memory_text = self.get_memory_tokens(task, role)
 
-        # Task only — latent memory provides context, NOT text concatenation
+        # Prepend graph memory text to the prompt (REAL memory injection!)
+        full_task = task
+        if memory_text and confidence > -0.2:  # Only use memory if not actively harmful
+            full_task = memory_text + task
+
         response = self.api.generate(
             system_prompt=agent.system_prompt,
-            user_message=task,  # Just the original task, no text context
-            history=None,        # No history accumulation
+            user_message=full_task,
+            history=None,
             latent_memory=memory_tokens if memory_tokens.sum() != 0 else None,
             confidence=confidence,
         )
 
-        agent.add_to_history("user", task)
+        agent.add_to_history("user", full_task)
         agent.add_to_history("assistant", response)
         return response
 
@@ -245,7 +269,10 @@ class Orchestrator:
             "planning": NodeType.CAPSULE,
         }
         node_type = type_map.get(task_type, NodeType.CONTEXT)
-        self.graph.add_node(combined, node_type, role=task_type, task_id=str(self.stats['total_tasks']))
+        # FIX #1: Store original text in graph node for memory serialization
+        self.graph.add_node(combined, node_type, role=task_type,
+                           task_id=str(self.stats['total_tasks']),
+                           question=task, answer=answer)
 
     # ── Batch Execution ───────────────────────────────
 

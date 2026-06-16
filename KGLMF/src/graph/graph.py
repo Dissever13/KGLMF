@@ -58,26 +58,13 @@ class LatentReasoningGraph:
         role: str = "generic",
         task_id: str = "",
         metadata: Optional[dict] = None,
+        question: str = "",
+        answer: str = "",
     ) -> str:
         """Create a new node and insert it into the graph.
 
-        Parameters
-        ----------
-        embedding : torch.Tensor
-            Node embedding vector of shape (d_model,).
-        node_type : NodeType
-            Semantic type of the node (ROLE, TRAJECTORY, CONTEXT, CAPSULE).
-        role : str
-            Role label for role-typed edges (e.g. "planner", "executor").
-        task_id : str
-            Identifier of the task that produced this node.
-        metadata : dict or None
-            Optional free-form metadata dictionary.
-
-        Returns
-        -------
-        str
-            The auto-generated node ID (``"n_0"``, ``"n_1"``, ...).
+        FIX #1: Stores question/answer text for memory serialization.
+        FIX #4: Edge-aware retrieval via neighbor expansion.
         """
         node_id = f"n_{self._next_id}"
         self._next_id += 1
@@ -95,6 +82,8 @@ class LatentReasoningGraph:
             task_id=task_id,
             timestamp=time.time(),
             metadata=metadata if metadata is not None else {},
+            question=question,
+            answer=answer,
         )
         self.nodes[node_id] = node
         return node_id
