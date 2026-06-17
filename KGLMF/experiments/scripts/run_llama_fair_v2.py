@@ -46,7 +46,8 @@ Usage:
         --dataset all --n_samples 81 --output_dir results_llama_v2/
 """
 
-import os, sys, json, time, random, argparse, re, math
+import os, json, time, random, argparse, re, math
+import tempfile, subprocess, sys
 import torch, numpy as np
 import requests
 from datetime import datetime
@@ -66,11 +67,79 @@ from src.router.tts import AdaptiveTTSController
 from src.injection.injector import LatentInjector, MemoryScorer
 from src.evolution.evolution import GraphEvolution
 from src.agents.orchestrator import Orchestrator
+from src.api.local_llm import LocalLLM
 
 
 # ===============================================================
 # OLLAMA CLIENT (with real token tracking)
 # ===============================================================
+
+HF_MODEL_ROOT = "D:/HF_models"
+HF_MODEL_CANDIDATES = [
+    os.path.join(HF_MODEL_ROOT, "models--google--gemma-4-8b-it"),
+    os.path.join(HF_MODEL_ROOT, "models--meta-llama--Meta-Llama-3.1-8B-Instruct"),
+    os.path.join(HF_MODEL_ROOT, "models--meta-llama--Llama-3.1-8B-Instruct"),
+    os.path.join(HF_MODEL_ROOT, "models--meta-llama--Meta-Llama-3-8B-Instruct"),
+]
+HF_MODEL_FILE_EXTENSIONS = (
+    ".safetensors",
+    ".bin",
+    ".pt",
+    ".pth",
+    ".gguf",
+    ".safetensors.index.json",
+    ".bin.index.json",
+)
+
+
+def _contains_hf_model_files(path: str) -> bool:
+    """Return True when a directory contains HF config or weight artifacts."""
+    if not os.path.isdir(path):
+        return False
+    if os.path.isfile(os.path.join(path, "config.json")):
+        return True
+
+    for root, _dirs, files in os.walk(path):
+        for filename in files:
+            if filename == "config.json" or filename.endswith(HF_MODEL_FILE_EXTENSIONS):
+                return True
+    return False
+
+
+def _find_hf_model_path(cache_dir: str) -> Optional[str]:
+    """Resolve a local HF cache/model directory to a loadable model path."""
+    if not os.path.isdir(cache_dir):
+        return None
+    if os.path.isfile(os.path.join(cache_dir, "config.json")):
+        return cache_dir
+
+    snapshots_dir = os.path.join(cache_dir, "snapshots")
+    if os.path.isdir(snapshots_dir):
+        snapshots = [
+            os.path.join(snapshots_dir, name)
+            for name in os.listdir(snapshots_dir)
+            if os.path.isdir(os.path.join(snapshots_dir, name))
+        ]
+        snapshots.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+        for snapshot in snapshots:
+            if _contains_hf_model_files(snapshot):
+                return snapshot
+
+    blobs_dir = os.path.join(cache_dir, "blobs")
+    if _contains_hf_model_files(blobs_dir):
+        return cache_dir
+    return None
+
+
+def _detect_hf_model(task_type_for_latent: bool) -> tuple:
+    """Select LocalLLM for latent KG-LMF when a local HF model is available."""
+    if task_type_for_latent:
+        for candidate in HF_MODEL_CANDIDATES:
+            model_path = _find_hf_model_path(candidate)
+            if model_path:
+                return LocalLLM, {"model": model_path}
+    return OllamaClient, {"model": "llama3.1:8b"}
+
 
 class OllamaClient:
     """Local Llama3.1 8B via Ollama. Tracks real token counts per call."""
@@ -89,7 +158,7 @@ class OllamaClient:
     def generate(self, system_prompt: str, user_message: str,
                  temperature: float = 0.0, max_tokens: int = 2048,
                  history=None, latent_memory=None,
-                 confidence: float = 0.0) -> str:
+                 confidence: float = 0.0, **kwargs) -> str:
         """Returns text string. Token counts stored in self.last_tokens and accumulated."""
         full_prompt = ""
         if history:
@@ -359,22 +428,46 @@ def run_nomemory_multi(api: OllamaClient, task: str, task_type: str) -> dict:
 # METHOD 3: KG-LMF (with real token tracking)
 # ===============================================================
 
-def run_kglmf(api: OllamaClient, task: str, task_type: str,
+def _zero_tokens() -> Dict[str, int]:
+    return {'prompt': 0, 'completion': 0, 'total': 0}
+
+
+def _reset_llm_accumulator(api) -> None:
+    if hasattr(api, "reset_accumulator"):
+        api.reset_accumulator()
+    elif hasattr(api, "accumulated_tokens"):
+        api.accumulated_tokens = _zero_tokens()
+
+
+def _get_llm_accumulated_tokens(api) -> Dict[str, int]:
+    tokens = getattr(api, "accumulated_tokens", None)
+    if tokens is None:
+        tokens = getattr(api, "last_tokens", None)
+    if not tokens:
+        return _zero_tokens()
+    return {
+        'prompt': int(tokens.get('prompt', 0)),
+        'completion': int(tokens.get('completion', 0)),
+        'total': int(tokens.get('total', tokens.get('prompt', 0) + tokens.get('completion', 0))),
+    }
+
+
+def run_kglmf(api: Any, task: str, task_type: str,
               orchestrator: Orchestrator) -> dict:
-    """Full KG-LMF pipeline. Tracks REAL token counts from Ollama.
+    """Full KG-LMF pipeline. Tracks backend token counts when available.
 
     KEY FIX: Uses api.accumulated_tokens for real counts.
     KEY FIX: For code tasks, reduces memory injection (skip if no relevant code memory).
     """
     t0 = time.time()
-    api.reset_accumulator()
+    _reset_llm_accumulator(api)
 
     result = orchestrator.run_task(task=task, task_type=task_type)
     answer = _extract_answer(result['final_answer'], task_type)
     elapsed = time.time() - t0
 
-    # Real token counts from Ollama
-    real_tok = dict(api.accumulated_tokens)
+    # Real token counts from the selected backend when available
+    real_tok = _get_llm_accumulated_tokens(api)
 
     # Memory hit rate: average cosine similarity of retrieved graph nodes to query
     memory_hit = _compute_kg_memory_hit(api, task, orchestrator)
@@ -398,7 +491,7 @@ def run_kglmf(api: OllamaClient, task: str, task_type: str,
     }
 
 
-def run_kglmf_multi(api: OllamaClient, task: str, task_type: str,
+def run_kglmf_multi(api: Any, task: str, task_type: str,
                     orchestrator: Orchestrator) -> dict:
     """KG-LMF Multi-agent: N agents + latent memory injection + role-specific prompts.
 
@@ -406,13 +499,13 @@ def run_kglmf_multi(api: OllamaClient, task: str, task_type: str,
     Each agent has its own role-specific prompt, and latent memory provides context.
     """
     t0 = time.time()
-    api.reset_accumulator()
+    _reset_llm_accumulator(api)
 
     result = orchestrator.run_task(task=task, task_type=task_type, multi_agent=True)
     answer = _extract_answer(result['final_answer'], task_type)
     elapsed = time.time() - t0
 
-    real_tok = dict(api.accumulated_tokens)
+    real_tok = _get_llm_accumulated_tokens(api)
 
     memory_hit = _compute_kg_memory_hit(api, task, orchestrator)
     latent_size = len(result.get('roles_used', [])) * 16  # n_learnable_queries per agent
@@ -566,6 +659,38 @@ def _extract_answer(text: str, task_type: str) -> str:
 # EVALUATION (improved)
 # ===============================================================
 
+def execute_code(code_str: str, timeout: int = 10) -> tuple:
+    """Execute generated Python code and return (success, output_or_error)."""
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".py",
+            encoding="utf-8",
+            delete=False,
+        ) as tmp:
+            tmp.write(code_str)
+            tmp_path = tmp.name
+
+        result = subprocess.run(
+            [sys.executable, tmp_path],
+            timeout=timeout,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            return True, result.stdout
+        return False, result.stderr
+    except subprocess.TimeoutExpired:
+        return False, "Timeout"
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+
+
 def evaluate(pred: str, expected: str, metric: str, task_type: str = 'qa') -> float:
     """Evaluate prediction against expected answer.
 
@@ -574,6 +699,11 @@ def evaluate(pred: str, expected: str, metric: str, task_type: str = 'qa') -> fl
     - Multiple-choice handling for science tasks
     - Substring matching for code tasks
     """
+    if task_type == 'code' and pred:
+        ok, _output = execute_code(pred)
+        if ok:
+            return 1.0
+
     if not pred or not expected:
         return 0.0
 
@@ -805,7 +935,8 @@ METHODS = [
 
 
 def run_dataset(ds_name: str, n_samples: int, api: OllamaClient,
-                checkpoint_path: str = None, seed: int = 42) -> Dict:
+                checkpoint_path: str = None, seed: int = 42,
+                hf_api: Optional[LocalLLM] = None) -> Dict:
     """Run all 5 methods on one dataset."""
     config = DATASET_CONFIG[ds_name]
     samples = load_dataset(ds_name, n_samples, seed)
@@ -816,9 +947,15 @@ def run_dataset(ds_name: str, n_samples: int, api: OllamaClient,
     n = len(samples)
     task_type = config['task_type']
     metric = config['metric']
+    _llm = hf_api if hf_api is not None else None
+    kglmf_api = _llm or api
 
     print(f"\n{'='*70}")
     print(f"  {ds_name} | N={n} | type={task_type} | metric={metric}")
+    if _llm is not None:
+        print(f"  KG-LMF backend: LocalLLM ({getattr(_llm, 'model_id', 'HF local model')})")
+    else:
+        print(f"  KG-LMF backend: Ollama ({api.model})")
     print(f"{'='*70}")
 
     # ── Initialize KG-LMF ──
@@ -859,7 +996,7 @@ def run_dataset(ds_name: str, n_samples: int, api: OllamaClient,
     orchestrator = Orchestrator(
         composer=composer, router=router, tts=tts_controller,
         injector=injector, evolution=evolution, graph=graph,
-        api_client=api, d_model=d_model, scorer=scorer,  # FIX #1
+        api_client=kglmf_api, d_model=d_model, scorer=scorer,  # FIX #1
     )
 
     # ── Initialize TextMemory (shared across Single and Multi) ──
@@ -885,12 +1022,12 @@ def run_dataset(ds_name: str, n_samples: int, api: OllamaClient,
         all_results['nomemory_multi'].append(r2)
 
         # ── Method 3: KG-LMF (single agent + latent memory) ──
-        r3 = run_kglmf(api, q, task_type, orchestrator)
+        r3 = run_kglmf(kglmf_api, q, task_type, orchestrator)
         r3['score'] = evaluate(r3['answer'], expected, metric, task_type)
         all_results['kglmf'].append(r3)
 
         # ── Method 4: KG-LMF Multi (multi agent + latent memory) ──
-        r4 = run_kglmf_multi(api, q, task_type, orchestrator)
+        r4 = run_kglmf_multi(kglmf_api, q, task_type, orchestrator)
         r4['score'] = evaluate(r4['answer'], expected, metric, task_type)
         all_results['kglmf_multi'].append(r4)
 
@@ -965,6 +1102,17 @@ def main():
     print()
 
     api = OllamaClient(model=args.model)
+    hf_api = None
+    llm_cls, llm_kwargs = _detect_hf_model(task_type_for_latent=True)
+    if llm_cls is LocalLLM:
+        try:
+            hf_api = LocalLLM.from_hf_cache(llm_kwargs["model"])
+            print(f"  KG-LMF latent backend: LocalLLM ({llm_kwargs['model']})")
+        except Exception as exc:
+            print(f"  [WARN] LocalLLM unavailable: {exc}")
+            print(f"  KG-LMF latent backend: Ollama ({args.model})")
+    else:
+        print(f"  KG-LMF latent backend: Ollama ({args.model})")
 
     datasets = list(DATASET_CONFIG.keys()) if args.dataset == 'all' else [args.dataset]
     print(f"  Running: {datasets}")
@@ -974,7 +1122,7 @@ def main():
     start_time = datetime.now()
 
     for ds in datasets:
-        summary = run_dataset(ds, args.n_samples, api, args.checkpoint, args.seed)
+        summary = run_dataset(ds, args.n_samples, api, args.checkpoint, args.seed, hf_api=hf_api)
         if summary:
             all_summaries.append(summary)
 

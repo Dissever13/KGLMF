@@ -46,6 +46,8 @@ class LocalLLM:
         self.model_id = model_path or model_name
         self.max_tokens = max_tokens
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+        self.last_tokens = {"prompt": 0, "completion": 0, "total": 0}
+        self.accumulated_tokens = {"prompt": 0, "completion": 0, "total": 0}
         torch_dtype = self._resolve_dtype(dtype)
 
         tokenizer_kwargs = {
@@ -92,6 +94,9 @@ class LocalLLM:
             return torch.float32
         return None
 
+    def reset_accumulator(self) -> None:
+        self.accumulated_tokens = {"prompt": 0, "completion": 0, "total": 0}
+
     @staticmethod
     def find_ollama_gguf_blob(
         model: str = "llama3.1:8b",
@@ -126,6 +131,54 @@ class LocalLLM:
                 return blob_path
         return None
 
+    @staticmethod
+    def _contains_hf_model_files(path: str) -> bool:
+        if not os.path.isdir(path):
+            return False
+        suffixes = (
+            ".safetensors",
+            ".bin",
+            ".pt",
+            ".pth",
+            ".gguf",
+            ".safetensors.index.json",
+            ".bin.index.json",
+        )
+        for _root, _dirs, files in os.walk(path):
+            for filename in files:
+                if filename.endswith(suffixes):
+                    return True
+        return False
+
+    @classmethod
+    def from_hf_cache(cls, cache_dir: str, **kwargs) -> "LocalLLM":
+        """Create a LocalLLM from a Hugging Face cache or direct model dir."""
+        model_path = None
+
+        snapshots_dir = os.path.join(cache_dir, "snapshots")
+        if os.path.isdir(snapshots_dir):
+            snapshots = [
+                os.path.join(snapshots_dir, name)
+                for name in os.listdir(snapshots_dir)
+                if os.path.isdir(os.path.join(snapshots_dir, name))
+            ]
+            snapshots.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+            for snapshot in snapshots:
+                if cls._contains_hf_model_files(snapshot):
+                    model_path = snapshot
+                    break
+
+        if model_path is None and os.path.isfile(os.path.join(cache_dir, "config.json")):
+            model_path = cache_dir
+
+        if model_path is None:
+            raise FileNotFoundError(
+                f"No Hugging Face model snapshot or config.json found under {cache_dir}"
+            )
+
+        kwargs["local_files_only"] = True
+        return cls(model_path=model_path, **kwargs)
+
     @classmethod
     def from_ollama_model(cls, model: str = "llama3.1:8b", **kwargs) -> "LocalLLM":
         """Locate the Ollama blob and explain why a Transformers model is required."""
@@ -149,6 +202,11 @@ class LocalLLM:
         return self.model.get_input_embeddings().weight.device
 
     def _decoder_layers(self):
+        model_type = str(getattr(getattr(self.model, "config", None), "model_type", "")).lower()
+        if "gemma" in model_type and hasattr(self.model, "model") and hasattr(self.model.model, "layers"):
+            return self.model.model.layers
+        if "llama" in model_type and hasattr(self.model, "model") and hasattr(self.model.model, "layers"):
+            return self.model.model.layers
         if hasattr(self.model, "model") and hasattr(self.model.model, "layers"):
             return self.model.model.layers
         if hasattr(self.model, "transformer") and hasattr(self.model.transformer, "h"):
@@ -224,6 +282,7 @@ class LocalLLM:
     ) -> str:
         prompt = self._format_prompt(system_prompt, user_message, history)
         inputs = self.tokenizer(prompt, return_tensors="pt").to(self._input_device())
+        prompt_tokens = int(inputs["input_ids"].shape[-1])
 
         hooks = []
         if latent_memory is not None:
@@ -246,6 +305,14 @@ class LocalLLM:
                 handle.remove()
 
         new_tokens = output_ids[0, inputs["input_ids"].shape[-1]:]
+        completion_tokens = int(new_tokens.shape[-1])
+        self.last_tokens = {
+            "prompt": prompt_tokens,
+            "completion": completion_tokens,
+            "total": prompt_tokens + completion_tokens,
+        }
+        for key, value in self.last_tokens.items():
+            self.accumulated_tokens[key] += value
         return self.tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
 
     def get_embedding(self, text: str) -> torch.Tensor:

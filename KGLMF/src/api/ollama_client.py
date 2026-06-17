@@ -8,7 +8,7 @@ class OllamaClient:
         self.max_tokens = max_tokens
         self.client = OpenAI(api_key="ollama", base_url=base_url)
 
-    def generate(self, system_prompt, user_message, history=None, latent_memory=None, confidence=None, temperature=0.0, max_tokens=None):
+    def generate(self, system_prompt, user_message, history=None, latent_memory=None, confidence=None, temperature=0.0, max_tokens=None, **kwargs):
         messages = [{"role": "system", "content": system_prompt}]
         if history:
             messages.extend(history[-10:])
