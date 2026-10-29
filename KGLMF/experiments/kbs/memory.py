@@ -16,6 +16,20 @@ KINDS = ("role", "trajectory", "context", "capsule")
 ANCHORS = "yes no true false one two three first second answer question because therefore however think know find use make good bad big small high low same different correct wrong positive negative before after start end create change result".split()
 
 
+STRUCTURAL_COST_VERSION = "active-edges-v1"
+
+
+def count_active_edges(graph, node_ids):
+    """Count positive undirected edges in the eligible propagation subgraph.
+
+    Each edge contributes once, regardless of the propagation round count.
+    Self-transitions used to normalize isolated nodes are not graph edges.
+    """
+    eligible = set(node_ids)
+    return len({frozenset((a, b)) for (a, b), weight in graph.edges.items()
+                if a != b and a in eligible and b in eligible and weight > 0})
+
+
 class MemoryGraph:
     def __init__(self, width, max_nodes=2000, edge_threshold=.1, neighbors=None,
                  per_type_capacity=500, merge_threshold=.85, prune_threshold=.1,
@@ -163,7 +177,14 @@ class MemoryGraph:
                     sim = float(F.cosine_similarity(na["tokens"].mean(0),nb["tokens"].mean(0),dim=0))
                     if sim <= threshold:
                         continue
+                    # Preserve the write records and the Eq.13 mixture when the
+                    # writer changes after a later online likelihood update.
+                    def sources(node):
+                        return node.get("write_sources") or [dict(weight=1.,components=node.get("components"),tokens=node["tokens"].clone())]
+                    left,right = sources(na),sources(nb)
                     na["tokens"] = (wa*na["tokens"]+wb*nb["tokens"])/(wa+wb)
+                    na["write_sources"] = [dict(s,weight=s["weight"]*w/(wa+wb))
+                        for branch,w in ((left,wa),(right,wb)) for s in branch]
                     if wb > wa:
                         na["role"],na["task"] = nb["role"],nb["task"]
                     na["source_ids"] = sorted(set(na["source_ids"]+nb["source_ids"]))
@@ -220,17 +241,20 @@ class MemoryGraph:
 
 
 class LatentMemory(nn.Module):
-    def __init__(self, width, hidden, max_tokens=32, temperature=.1, hops=4, alpha=.5, write_tokens=16, dropout=.1):
+    def __init__(self, width, hidden, max_tokens=32, temperature=.1, hops=4, alpha=.5, write_tokens=16, dropout=.1, role_names=None):
         super().__init__()
         if min(width,hidden,max_tokens,write_tokens) < 1 or not 0 < alpha < 1 or temperature <= 0:
             raise ValueError("Invalid dimensions/controller")
         self.width,self.hidden,self.max_tokens = width,hidden,max_tokens
+        self.role_names = tuple(role_names or ROLES)
+        if not self.role_names or len(set(self.role_names)) != len(self.role_names):
+            raise ValueError("Role names must be nonempty and unique")
         self.temperature,self.hops,self.alpha,self.write_tokens = temperature,hops,alpha,write_tokens
         self.router = nn.Linear(width,width,bias=False)
         nn.init.xavier_uniform_(self.router.weight)
-        self.route_roles = nn.Embedding(len(ROLES),width)
+        self.route_roles = nn.Embedding(len(self.role_names),width)
         self.route_role_projection = nn.Linear(width,width,bias=False)
-        self.roles = nn.Embedding(len(ROLES),width)
+        self.roles = nn.Embedding(len(self.role_names),width)
         nn.init.normal_(self.route_roles.weight,std=.02)
         nn.init.normal_(self.roles.weight,std=.02)
         self.role_projection = nn.Linear(width,width,bias=False)
@@ -268,9 +292,9 @@ class LatentMemory(nn.Module):
         """Positive bounded weights with fixed total scale, initialized at 1/1."""
         return .1+1.8*self.cost_logits.softmax(0)
 
-    def structural_cost(self, budget, active_nodes, graph_depth):
+    def structural_cost(self, budget, active_nodes, active_edges):
         gamma = self.cost_coefficients()
-        return budget+gamma[0]*active_nodes+gamma[1]*graph_depth
+        return budget+gamma[0]*active_nodes+gamma[1]*active_edges
 
     def freeze_calibration(self):
         for p in self.router_parameters()+list(self.scorer.parameters()):
@@ -291,9 +315,9 @@ class LatentMemory(nn.Module):
         ids = graph.eligible(excluded,domains,capsules,excluded_nodes)
         if not ids:
             return dict(ids=[],initial=torch.empty(0,device=self.pool.device),scores=torch.empty(0,device=self.pool.device),
-                chosen=torch.empty(0,dtype=torch.long,device=self.pool.device),active=0,depth=0)
+                chosen=torch.empty(0,dtype=torch.long,device=self.pool.device),active=0,active_edges=0,depth=0)
         q = query.to(self.pool.device).float()
-        role_vec = self.route_role_projection(self.route_roles.weight[ROLES.index(role)]) if role_condition else torch.zeros_like(q)
+        role_vec = self.route_role_projection(self.route_roles.weight[self.role_names.index(role)]) if role_condition else torch.zeros_like(q)
         keys = torch.stack([graph.nodes[n]["tokens"].mean(0) for n in ids]).to(q.device)
         initial = (keys@self.router(q+role_vec)/self.temperature).softmax(0)
         scores,depth = initial,0
@@ -316,15 +340,15 @@ class LatentMemory(nn.Module):
             for _ in range(depth):
                 scores = self.alpha*(transition.T@scores)+(1-self.alpha)*initial
         chosen = scores.topk(min(k,len(ids))).indices
-        return dict(ids=ids,initial=initial,scores=scores,chosen=chosen,active=len(ids),depth=depth)
+        return dict(ids=ids,initial=initial,scores=scores,chosen=chosen,active=len(ids),active_edges=count_active_edges(graph, ids) if depth > 0 else 0,depth=depth)
 
     def compose(self, graph, ids, role, budget, role_condition=True, reencode=False):
         blocks = []
         for nid in ids:
             node = graph.nodes[nid]
-            blocks.append(self.write(node["components"]) if reencode and node.get("components") is not None else node["tokens"].to(self.pool.device))
+            blocks.append(encoded_node(self,node) if reencode else node["tokens"].to(self.pool.device))
         tokens = torch.cat(blocks)
-        role_vec = self.role_projection(self.roles.weight[ROLES.index(role)]) if role_condition else torch.zeros(self.width,device=tokens.device)
+        role_vec = self.role_projection(self.roles.weight[self.role_names.index(role)]) if role_condition else torch.zeros(self.width,device=tokens.device)
         queries = self.pool[:budget]+role_vec
         attn = (queries@self.key(tokens).T/math.sqrt(self.width)).softmax(-1)
         return self.norm(attn@self.value(tokens))
@@ -332,7 +356,7 @@ class LatentMemory(nn.Module):
     def utility_score(self, query, composed):
         return self.scorer(torch.cat((query.to(self.pool.device).float(),composed.mean(0)))).squeeze().clamp(-1,1)
 
-    def forward(self, query, graph, role="solver", k=4, budget=16, excluded=(), domains=None, topology="graph", role_condition=True, capsules=True, hops=None, selected_ids=None, excluded_nodes=(), reencode=False, gate="dynamic", adapter="trained"):
+    def forward(self, query, graph, role="solver", k=4, budget=16, excluded=(), domains=None, topology="graph", role_condition=True, capsules=True, hops=None, selected_ids=None, excluded_nodes=(), reencode=False, gate="dynamic", adapter="trained", composition_role_condition=None):
         if not 1 <= budget <= self.max_tokens or k < 1:
             raise ValueError("K/B outside supported range")
         measure = not torch.is_grad_enabled()
@@ -350,9 +374,9 @@ class LatentMemory(nn.Module):
         if any(n not in allowed for n in ids):
             raise ValueError("Selected node violates retrieval access boundary")
         if not ids:
-            return None,dict(ids=[],budget=0,weights=[],active_nodes=routing["active"],graph_depth=routing["depth"],gate=0.,routing_seconds=routing_seconds,synthesis_seconds=0.)
+            return None,dict(ids=[],budget=0,weights=[],active_nodes=routing["active"],active_edges=routing["active_edges"],graph_depth=routing["depth"],cost_version=STRUCTURAL_COST_VERSION,gate=0.,routing_seconds=routing_seconds,synthesis_seconds=0.)
         started = time.perf_counter()
-        composed = self.compose(graph,ids,role,budget,role_condition,reencode)
+        composed = self.compose(graph,ids,role,budget,role_condition if composition_role_condition is None else composition_role_condition,reencode)
         if adapter == "cma":
             if not bool(self.cma_ready):
                 raise ValueError("CMA anchors not initialized")
@@ -373,14 +397,25 @@ class LatentMemory(nn.Module):
         synchronize()
         synthesis_seconds = time.perf_counter()-started
         return strength*aligned,dict(ids=ids,budget=budget,weights=weights,
-            active_nodes=routing["active"],graph_depth=routing["depth"],
-            structural_cost=float(self.structural_cost(budget,routing["active"],routing["depth"]).detach()),
+            active_nodes=routing["active"],active_edges=routing["active_edges"],graph_depth=routing["depth"],cost_version=STRUCTURAL_COST_VERSION,
+            structural_cost=float(self.structural_cost(budget,routing["active"],active_edges=routing["active_edges"]).detach()),
             gate=float(strength.detach()),utility_score=float(ca.detach()),routing_seconds=routing_seconds,synthesis_seconds=synthesis_seconds)
+
+
+def encoded_node(memory, node):
+    if hasattr(memory, 'reencode_node'):
+        return memory.reencode_node(node)
+    if node.get("write_sources"):
+        return sum(s["weight"]*(memory.write(s["components"]) if s.get("components") is not None
+                   else s["tokens"].to(memory.pool.device)) for s in node["write_sources"])
+    if node.get("components") is not None:
+        return memory.write(node["components"])
+    return node["tokens"].to(memory.pool.device)
 
 
 def refresh_graph(memory, graph):
     with torch.no_grad():
         for node in graph.nodes.values():
-            if node.get("components") is not None:
-                node["tokens"] = memory.write(node["components"]).detach().float().cpu()
+            if node.get("components") is not None or node.get("write_sources") or node.get("capsule_records"):
+                node["tokens"] = encoded_node(memory,node).detach().float().cpu()
     graph.recompute_edges()

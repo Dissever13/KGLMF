@@ -41,7 +41,8 @@ def example_config(model):
 
 
 if __name__ == "__main__":
+    from .online_protocol import example_config as online_config
     root = Path(__file__).parent/"configs"
     for name,model in [("qwen","D:/HF_models/models--Qwen--Qwen3.5-4B"),
                        ("gemma","D:/HF_models/models--google--gemma-4-E2B-it")]:
-        write_json(root/(name+".json"),example_config(model))
+        write_json(root/(name+".json"),online_config(model))

@@ -33,6 +33,7 @@ KGLMF/experiments/results/
 KGLMF/experiments/scripts/results_*/
 KGLMF/experiments/kbs/manifests/
 runs/kbs-v2/
+KGLMF/experiments/kbs/runs/
 
 # Dependency specification for the standalone experiment entry point
 !KGLMF/experiments/kbs/requirements.txt

@@ -70,7 +70,7 @@ if __name__ == "__main__":
     a=p.parse_args()
     import torch
     state=torch.load(a.checkpoint,map_location="cpu",weights_only=True)
-    graph=state.get("graph",state)
+    graph=state["engine"]["graph"] if "engine" in state else state.get("graph",state)
     controls=[]
     for seed in range(a.random_controls):
         edges,swaps=randomized_edges(graph["edges"],seed)

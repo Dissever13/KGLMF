@@ -7,6 +7,7 @@ import argparse
 import contextlib
 import io
 import json
+import os
 import re
 import subprocess
 import sys
@@ -68,16 +69,14 @@ def grade(request, image, timeout=30, docker="docker"):
     if digest(request["prediction"]) != request["prediction_sha256"]:
         raise ValueError("Prediction hash mismatch")
     if request["metric"] == "external_math":
-        from math_verify import parse,verify
-        gold = request["answers"][0]
-        gold_expr = parse(gold if "$" in gold else "$"+gold+"$")
-        if not gold_expr:
-            raise ValueError("Unparseable source math answer")
-        with contextlib.redirect_stdout(io.StringIO()):
-            pred = parse(request["prediction"])
-            score = int(bool(pred) and verify(gold_expr,pred))
-        return dict(id=request["id"],prediction_sha256=request["prediction_sha256"],score=score,
-                    harness="huggingface/Math-Verify",revision=version("math-verify"))
+        # Bound the entire parser/verifier in a disposable subprocess. Math-Verify's
+        # nested multiprocessing timeout is not spawn-compatible on Windows.
+        proc = subprocess.run([sys.executable, "-m", __package__ + ".grader", "--math-worker"],
+                              input=json.dumps(request), capture_output=True, text=True,
+                              encoding="utf-8", env=dict(os.environ, PYTHONIOENCODING="utf-8",
+                                                         PYTHONPATH=os.pathsep.join(sys.path)),
+                              timeout=timeout, check=True)
+        return json.loads(proc.stdout)
     if request["metric"] != "external_code":
         raise ValueError("Only code/math use this external scorer")
     tests = request["raw"].get("test")
@@ -104,14 +103,33 @@ def grade(request, image, timeout=30, docker="docker"):
                 harness="KG-LMF source-test container ("+request["dataset"]+")",revision=image_id+":"+digest(WORKER))
 
 
+def math_worker(request):
+    """Called only by grade() inside its externally time-bounded subprocess."""
+    from math_verify import parse, verify
+    if digest(request["prediction"]) != request["prediction_sha256"]:
+        raise ValueError("Prediction hash mismatch")
+    gold = request["answers"][0]
+    delimited_gold = gold if re.search(r"(?<!\\)\$.*(?<!\\)\$", gold, re.S) else "$" + gold + "$"
+    gold_expr = parse(delimited_gold, parsing_timeout=None,
+                      raise_on_error=True)
+    if not gold_expr:
+        raise ValueError("Unparseable source math answer")
+    with contextlib.redirect_stdout(io.StringIO()):
+        pred = parse(request["prediction"], parsing_timeout=None)
+        score = int(bool(pred) and verify(gold_expr, pred, timeout_seconds=None))
+    return dict(id=request["id"], prediction_sha256=request["prediction_sha256"], score=score,
+                harness="huggingface/Math-Verify", revision=version("math-verify"))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image",default="kglmf-evaluator:1")
     parser.add_argument("--timeout",type=int,default=30)
     parser.add_argument("--docker",default="docker")
+    parser.add_argument("--math-worker", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     request = json.load(sys.stdin)
-    print(json.dumps(grade(request,args.image,args.timeout,args.docker)))
+    print(json.dumps(math_worker(request) if args.math_worker else grade(request,args.image,args.timeout,args.docker)))
 
 
 if __name__ == "__main__":

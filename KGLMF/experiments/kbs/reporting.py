@@ -8,19 +8,22 @@ from .protocol import VERSION, bootstrap_mean, digest, read_json, write_json
 
 def read_records(paths):
     records,seen,metadata,backends = [],set(),[],{}
-    manifest = None
+    manifest, run_version = None, None
     for directory in paths:
         directory = Path(directory)
         run = read_json(directory/"run.json")
         if run["status"] != "complete":
             raise ValueError(f"Incomplete run: {directory}")
-        if run["version"] != VERSION:
+        if run["version"] not in {VERSION, "kbs-online-v3"}:
             raise ValueError("Legacy run format rejected")
+        if run_version is not None and run_version != run["version"]:
+            raise ValueError("Cannot pool offline and chronological online protocols")
+        run_version = run["version"]
         if manifest is not None and manifest != run["manifest_sha256"]:
             raise ValueError("Cannot combine different split manifests")
         manifest = run["manifest_sha256"]
         model = run["backend"]["model"]
-        signature = {k:run["backend"].get(k) for k in ["model_commit","encoder_commit","dtype","batch_size",
+        signature = {k:run["backend"].get(k) for k in ["model_commit","encoder_commit","transformers_version","torch_version","dtype","batch_size",
                      "quantization","hardware","max_input_tokens","max_new_tokens","temperature","top_p","top_k","repetition_penalty","input_embedding_scale","truncation_side"]}
         if model in backends and backends[model] != signature:
             raise ValueError("Incompatible backend/hardware/decoding for pooled performance-efficiency comparison")
@@ -66,6 +69,8 @@ def aggregate(paths, output, reference="kg_multi"):
         result = dict(model=model,suite=suite,dataset=dataset,condition=condition,phase=phase,
                       episode=episode,n_seeds=len(by_seed),n_examples_by_seed={s:len(v) for s,v in by_seed.items()},
                       pending_scores=sum(r["score"] is None for r in rows))
+        if any(r['cost'].keys() != rows[0]['cost'].keys() for r in rows):
+            raise ValueError('Cost schema changed within a condition; do not silently omit components')
         if complete:
             result["performance"] = bootstrap_mean([100*sum(r["score"] for r in v)/len(v) for s,v in sorted(by_seed.items())])
         result["cost"] = {cost:bootstrap_mean([sum(r["cost"][cost] for r in v)/len(v) for s,v in sorted(by_seed.items())])
@@ -86,7 +91,7 @@ def aggregate(paths, output, reference="kg_multi"):
         pairs.append(dict(model=model,suite=suite,dataset=dataset,phase=phase,episode=episode,
                           contrast=f"{reference} minus {condition}",
                           paired_seed_difference=bootstrap_mean([sum(v)/len(v) for s,v in sorted(differences.items())])))
-    report = dict(version=VERSION,summaries=summaries,paired_comparisons=pairs,
+    report = dict(version=metadata[0]["version"],summaries=summaries,paired_comparisons=pairs,
                   uncertainty="Sample SD across independently trained seeds; percentile bootstrap of seed means/differences. Not an example-level CI or a significance claim.",
                   runs=[{k:r[k] for k in ["seed","suite","manifest_sha256","checkpoint_sha256"]} for r in metadata])
     write_json(output,report)

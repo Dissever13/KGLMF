@@ -56,9 +56,17 @@ class HFBackend:
         mask = batch["attention_mask"].unsqueeze(-1)
         return F.normalize((outputs*mask).sum(1)/mask.sum(1).clamp_min(1),dim=-1)[0].float()
 
+    @torch.no_grad()
+    def encode_record(self, text):
+        """Frozen token representations for a typed memory record (not a pooled query)."""
+        batch = self.encoder_tokenizer(text, return_tensors="pt", truncation=True, max_length=512).to(self.device)
+        states = self.encoder(**batch).last_hidden_state[0]
+        return states[batch["attention_mask"][0].bool()].detach().float().cpu()
+
     def prompt_ids(self, prompt):
         if self.tokenizer.chat_template:
-            prompt = self.tokenizer.apply_chat_template([{"role":"user","content":prompt}], tokenize=False, add_generation_prompt=True)
+            options = {"enable_thinking": self.config["enable_thinking"]} if "enable_thinking" in self.config else {}
+            prompt = self.tokenizer.apply_chat_template([{"role":"user","content":prompt}], tokenize=False, add_generation_prompt=True, **options)
             add_special = False
         else:
             add_special = True

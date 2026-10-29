@@ -12,7 +12,10 @@ import math
 from .protocol import VERSION, read_json, validate_manifest, digest, score_answer, write_json
 
 
-def import_external(source, manifest_path, output):
+def import_external(source, manifest_path, output, scoring_config=None):
+    if read_json(manifest_path).get('version') == 'kbs-online-v3':
+        from .online_external import import_online_external
+        return import_online_external(source, manifest_path, output, scoring_config)
     data=read_json(source)
     manifest=validate_manifest(read_json(manifest_path))
     if not data.get("implementation_url") or not data.get("implementation_revision"):
@@ -53,5 +56,6 @@ if __name__ == "__main__":
     p=argparse.ArgumentParser(description=__doc__)
     for field in ["source","manifest","output"]:
         p.add_argument("--"+field,required=True)
+    p.add_argument('--config', help='Online config containing the synchronous isolated scorer')
     a=p.parse_args()
-    import_external(a.source,a.manifest,a.output)
+    import_external(a.source,a.manifest,a.output, read_json(a.config).get('scoring', {}) if a.config else None)

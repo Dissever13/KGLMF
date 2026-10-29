@@ -276,8 +276,12 @@ def validate_config(config):
 
 
 def final_answer(text):
-    matches = re.findall(r"FINAL\s*:\s*(.*)", text, flags=re.I)
-    return matches[-1].strip() if matches else text.strip()
+    # Recognize an explicit answer field, including harmless heading/Markdown
+    # variants. Never infer an answer from a mention in the reasoning prose.
+    matches = re.findall(r"^[ \t]*(?:#{1,6}[ \t]+)?(?:\*\*|__)?FINAL(?:[ \t]+ANSWER)?(?:\*\*|__)?[ \t]*:[ \t]*(?:\*\*|__)?[ \t]*([^\r\n]*)",
+                         text, flags=re.I | re.M)
+    value = matches[-1].strip() if matches else text.strip()
+    return value.strip('*_`').strip()
 
 
 def score_answer(text, row):

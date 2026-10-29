@@ -5,6 +5,7 @@ isolated evaluator; ungraded items never become zero rewards.
 """
 import copy
 import json
+import os
 import random
 import subprocess
 from pathlib import Path
@@ -35,6 +36,7 @@ class TaskScorer:
         request = dict(id=row["id"],dataset=row["dataset"],metric=row["metric"],prediction=prediction,
                        answers=row["answers"],raw=row["raw"],prediction_sha256=digest(prediction))
         proc = subprocess.run(command,input=json.dumps(request,ensure_ascii=False),text=True,
+                              encoding="utf-8",env=dict(os.environ,PYTHONIOENCODING="utf-8"),
                               capture_output=True,timeout=self.config.get("timeout_seconds",120),check=True,shell=False)
         verdict = json.loads(proc.stdout)
         if verdict.get("id") != row["id"] or verdict.get("prediction_sha256") != digest(prediction):
@@ -309,7 +311,7 @@ def train(config_path, manifest_path, output, seed, freeze_adapter=False, initia
                 gradient_checked = True
             # Metadata is detached for JSON reporting; use the live coefficients
             # here so Eq.9 updates their logits without differentiating counts.
-            structural_cost = memory.structural_cost(meta["budget"],meta["active_nodes"],meta["graph_depth"])
+            structural_cost = memory.structural_cost(meta["budget"],meta["active_nodes"],active_edges=meta["active_edges"])
             loss = nll+cfg["l2"]*regularizer+cfg["cost_weight"]*structural_cost
             optimizer.zero_grad(set_to_none=True)
             loss.backward()

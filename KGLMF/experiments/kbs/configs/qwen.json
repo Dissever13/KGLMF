@@ -1,5 +1,5 @@
 {
-  "protocol": "kbs-v2",
+  "protocol": "kbs-online-v3",
   "seeds": [
     42,
     43,
@@ -29,7 +29,6 @@
     "dropout": 0.1,
     "max_nodes": 2000,
     "per_type_capacity": 500,
-    "initial_examples": 500,
     "edge_threshold": 0.1,
     "neighbors": null,
     "merge_threshold": 0.85,
@@ -53,10 +52,10 @@
   "controller": {
     "min_tokens": 12,
     "max_tokens": 32,
-    "rule": "floor_dev_max_entropy"
+    "rule": "completed_history_max_entropy"
   },
   "training": {
-    "epochs": 3,
+    "epochs": 1,
     "learning_rate": 0.0001,
     "k": 4,
     "budget": 16,
@@ -73,36 +72,13 @@
   },
   "scoring": {
     "command": [
-      "python",
+      "D:\\anaconda3\\envs\\kglmf\\python.exe",
       "-m",
       "KGLMF.experiments.kbs.grader",
       "--image",
       "kglmf-evaluator:1"
     ],
     "timeout_seconds": 180
-  },
-  "probe_interval": 20,
-  "suite_domains": {
-    "ablation": [
-      "reasoning",
-      "math",
-      "science",
-      "code"
-    ],
-    "budget": [
-      "reasoning",
-      "math",
-      "science"
-    ],
-    "transfer": [
-      "reasoning",
-      "science"
-    ],
-    "stream": [
-      "reasoning",
-      "qa",
-      "science"
-    ]
   },
   "suites": {
     "main": [
@@ -128,7 +104,9 @@
         "agents": 1,
         "k": 4,
         "budget": 16,
-        "budget_policy": "entropy"
+        "budget_policy": "entropy",
+        "evolution": "append",
+        "capsules": false
       },
       {
         "name": "text_multi",
@@ -136,7 +114,9 @@
         "agents": 3,
         "k": 4,
         "budget": 16,
-        "budget_policy": "entropy"
+        "budget_policy": "entropy",
+        "evolution": "append",
+        "capsules": false
       },
       {
         "name": "kg_single",
@@ -225,6 +205,62 @@
         "budget": 16,
         "budget_policy": "entropy",
         "capsules": false
+      },
+      {
+        "name": "fixed_adapter",
+        "family": "latent",
+        "agents": 3,
+        "k": 4,
+        "budget": 16,
+        "budget_policy": "entropy",
+        "adapter": "cma"
+      },
+      {
+        "name": "flat_pool",
+        "family": "latent",
+        "agents": 3,
+        "k": 4,
+        "budget": 16,
+        "budget_policy": "entropy",
+        "storage": "flat",
+        "topology": "flat",
+        "capsules": false
+      },
+      {
+        "name": "no_role_retrieval",
+        "family": "latent",
+        "agents": 3,
+        "k": 4,
+        "budget": 16,
+        "budget_policy": "entropy",
+        "router_role_condition": false
+      },
+      {
+        "name": "no_role_composition",
+        "family": "latent",
+        "agents": 3,
+        "k": 4,
+        "budget": 16,
+        "budget_policy": "entropy",
+        "composition_role_condition": false
+      },
+      {
+        "name": "no_merge",
+        "family": "latent",
+        "agents": 3,
+        "k": 4,
+        "budget": 16,
+        "budget_policy": "entropy",
+        "merge": false
+      },
+      {
+        "name": "no_prune",
+        "family": "latent",
+        "agents": 3,
+        "k": 4,
+        "budget": 16,
+        "budget_policy": "entropy",
+        "prune": false
       }
     ],
     "budget": [
@@ -318,24 +354,24 @@
     ],
     "transfer": [
       {
-        "name": "source",
+        "name": "source_only",
         "family": "latent",
         "agents": 3,
         "k": 4,
         "budget": 16,
         "budget_policy": "entropy",
         "scope": "source",
-        "matched_capacity": 64
+        "experience_cap": 64
       },
       {
-        "name": "target",
+        "name": "target_only",
         "family": "latent",
         "agents": 3,
         "k": 4,
         "budget": 16,
         "budget_policy": "entropy",
         "scope": "target",
-        "matched_capacity": 64
+        "experience_cap": 64
       },
       {
         "name": "full",
@@ -345,29 +381,10 @@
         "budget": 16,
         "budget_policy": "entropy",
         "scope": "full",
-        "matched_capacity": 64
+        "experience_cap": 64
       }
     ],
     "stream": [
-      {
-        "name": "static",
-        "family": "latent",
-        "agents": 3,
-        "k": 4,
-        "budget": 16,
-        "budget_policy": "entropy",
-        "evolution": "static"
-      },
-      {
-        "name": "bounded_append",
-        "family": "latent",
-        "agents": 3,
-        "k": 4,
-        "budget": 16,
-        "budget_policy": "entropy",
-        "evolution": "append",
-        "capsules": false
-      },
       {
         "name": "evolve",
         "family": "latent",
@@ -378,15 +395,101 @@
         "evolution": "full"
       },
       {
-        "name": "evolve_no_capsule",
+        "name": "append",
         "family": "latent",
         "agents": 3,
         "k": 4,
         "budget": 16,
         "budget_policy": "entropy",
-        "evolution": "full",
+        "evolution": "append",
         "capsules": false
+      },
+      {
+        "name": "no_write",
+        "family": "latent",
+        "agents": 3,
+        "k": 4,
+        "budget": 16,
+        "budget_policy": "entropy",
+        "evolution": "static"
       }
+    ],
+    "sensitivity": [
+      {
+        "name": "k_1",
+        "family": "latent",
+        "agents": 3,
+        "k": 1,
+        "budget": 16,
+        "budget_policy": "fixed"
+      },
+      {
+        "name": "k_2",
+        "family": "latent",
+        "agents": 3,
+        "k": 2,
+        "budget": 16,
+        "budget_policy": "fixed"
+      },
+      {
+        "name": "k_4",
+        "family": "latent",
+        "agents": 3,
+        "k": 4,
+        "budget": 16,
+        "budget_policy": "fixed"
+      },
+      {
+        "name": "k_8",
+        "family": "latent",
+        "agents": 3,
+        "k": 8,
+        "budget": 16,
+        "budget_policy": "fixed"
+      },
+      {
+        "name": "b_4",
+        "family": "latent",
+        "agents": 3,
+        "k": 4,
+        "budget": 4,
+        "budget_policy": "fixed"
+      },
+      {
+        "name": "b_8",
+        "family": "latent",
+        "agents": 3,
+        "k": 4,
+        "budget": 8,
+        "budget_policy": "fixed"
+      },
+      {
+        "name": "b_16",
+        "family": "latent",
+        "agents": 3,
+        "k": 4,
+        "budget": 16,
+        "budget_policy": "fixed"
+      },
+      {
+        "name": "b_32",
+        "family": "latent",
+        "agents": 3,
+        "k": 4,
+        "budget": 32,
+        "budget_policy": "fixed"
+      }
+    ]
+  },
+  "feedback": "internal_and_post_answer_benchmark",
+  "transfer_directions": {
+    "non_science_to_science": [
+      "mmlu_pro",
+      "gpqa"
+    ],
+    "non_reasoning_to_reasoning": [
+      "strategyqa",
+      "hotpotqa"
     ]
   }
 }
