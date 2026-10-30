@@ -13,7 +13,7 @@ from .protocol import digest, provenance_ids
 from .memory import refresh_graph
 from .role_feedback import RUBRICS, ANSWER_ROLES, parse_role_quality, role_training_target, routing_advantage_loss, review_consistency
 
-REVISION = 'role-local-feedback-semantic-prior-active-edge-cost-2026-10-29'
+REVISION = 'role-local-feedback-semantic-prior-fixed-edge-cost-2026-10-30'
 
 
 def make_memory(backend, config):

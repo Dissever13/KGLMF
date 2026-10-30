@@ -66,15 +66,17 @@ def test_empty_retrieval_and_domain_filter(memory):
     assert meta['cost_version'] == STRUCTURAL_COST_VERSION
 
 
-def test_edge_cost_coefficient_receives_correct_gradient(memory):
+def test_fixed_edge_cost_is_accounting_not_a_parameter_gradient(memory):
     cost = memory.structural_cost(16, active_nodes=4, active_edges=10)
-    cost.backward()
-    assert cost.item() == 30.
-    # At equal logits, d gamma_1 / d logit_1 = .45, gamma_2 = -.45.
-    assert torch.allclose(memory.cost_logits.grad, torch.tensor([-2.7, 2.7]), atol=1e-6)
+    assert cost.item() == 30. and not cost.requires_grad
+    loss = memory.pool.square().sum() + .001*cost
+    loss.backward()
+    assert torch.allclose(memory.pool.grad, 2*memory.pool.detach())
+    assert memory.fixed_cost_weights.grad is None
+    assert torch.equal(memory.cost_coefficients(), torch.ones(2))
 
 
-@pytest.mark.parametrize('version', [None, 'graph-depth-v1'])
+@pytest.mark.parametrize('version', [None, 'graph-depth-v1', 'active-edges-v1'])
 def test_historical_cost_checkpoints_rejected_before_state_mutation(version):
     # Version rejection must happen before accessing or replacing engine state.
     with pytest.raises(ValueError, match='Structural cost version changed'):

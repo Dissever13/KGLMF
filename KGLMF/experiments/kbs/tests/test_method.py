@@ -46,27 +46,27 @@ def test_auxiliary_score_mass_updates_router_without_topk_gradient_claim():
     assert module.pool.grad is None and all(p.grad is None for p in module.adapter.parameters())
 
 
-def test_bounded_cost_weights_train_and_survive_checkpoint_round_trip():
+def test_fixed_cost_weights_survive_optimization_and_checkpoint_round_trip():
     module = LatentMemory(8,12)
-    assert torch.allclose(module.cost_coefficients(),torch.ones(2))
-    module.freeze_calibration()
-    optimizer = torch.optim.Adam([module.cost_logits],lr=.01)
-    before = module.structural_cost(16,80,4).detach().clone()
+    assert torch.equal(module.cost_coefficients(),torch.ones(2))
+    assert "fixed_cost_weights" in dict(module.named_buffers())
+    assert "fixed_cost_weights" not in dict(module.named_parameters())
+    assert not hasattr(module,"cost_logits")
+    optimizer = torch.optim.Adam(module.parameters(),lr=.01)
+    before = module.pool.detach().clone()
+    cost = module.structural_cost(16,80,active_edges=4)
+    assert cost.item() == 100. and not cost.requires_grad
     optimizer.zero_grad()
-    module.structural_cost(16,80,4).backward()
-    assert torch.isfinite(module.cost_logits.grad).all() and module.cost_logits.grad.abs().sum() > 0
-    assert all(p.grad is None for p in module.router_parameters())
+    (module.pool.square().sum()+.001*cost).backward()
+    assert module.fixed_cost_weights.grad is None
     optimizer.step()
-    assert module.structural_cost(16,80,4) < before
+    assert not torch.equal(module.pool,before)
+    assert torch.equal(module.cost_coefficients(),torch.ones(2))
+    assert module.structural_cost(16,80,active_edges=4).item() == 100.
     restored = LatentMemory(8,12)
     restored.load_state_dict(module.state_dict())
-    assert torch.equal(restored.cost_coefficients(),module.cost_coefficients())
-    for logits in ((1000.,-1000.),(-1000.,1000.),(0.,0.)):
-        with torch.no_grad():
-            module.cost_logits.copy_(torch.tensor(logits))
-        gamma = module.cost_coefficients()
-        assert torch.isfinite(gamma).all() and (gamma >= .1).all() and (gamma <= 1.9+1e-6).all()
-        assert torch.allclose(gamma.sum(),torch.tensor(2.))
+    assert torch.equal(restored.cost_coefficients(),torch.ones(2))
+
 
 
 def test_cma_paired_coordinates_and_norm_and_fixed_gate():

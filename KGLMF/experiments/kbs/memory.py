@@ -16,7 +16,7 @@ KINDS = ("role", "trajectory", "context", "capsule")
 ANCHORS = "yes no true false one two three first second answer question because therefore however think know find use make good bad big small high low same different correct wrong positive negative before after start end create change result".split()
 
 
-STRUCTURAL_COST_VERSION = "active-edges-v1"
+STRUCTURAL_COST_VERSION = "active-edges-fixed-v2"
 
 
 def count_active_edges(graph, node_ids):
@@ -267,7 +267,7 @@ class LatentMemory(nn.Module):
         self.adapter = nn.Sequential(nn.Linear(width,hidden),nn.LayerNorm(hidden),nn.GELU(),nn.Dropout(dropout),nn.Linear(hidden,hidden))
         self.scorer = nn.Sequential(nn.Linear(2*width,width),nn.GELU(),nn.Linear(width,1))
         self.gate_bias,self.gate_scale = nn.Parameter(torch.tensor(0.)),nn.Parameter(torch.tensor(.3))
-        self.cost_logits = nn.Parameter(torch.zeros(2))
+        self.register_buffer("fixed_cost_weights", torch.ones(2))
         self.register_buffer("cma",torch.zeros(width,hidden))
         self.register_buffer("input_norm",torch.tensor(1.))
         self.register_buffer("cma_ready",torch.tensor(False))
@@ -289,8 +289,8 @@ class LatentMemory(nn.Module):
         return list(self.router.parameters())+list(self.route_roles.parameters())+list(self.route_role_projection.parameters())
 
     def cost_coefficients(self):
-        """Positive bounded weights with fixed total scale, initialized at 1/1."""
-        return .1+1.8*self.cost_logits.softmax(0)
+        """Fixed unit weights; stored with the model but never optimized."""
+        return self.fixed_cost_weights
 
     def structural_cost(self, budget, active_nodes, active_edges):
         gamma = self.cost_coefficients()
