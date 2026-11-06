@@ -10,9 +10,9 @@ KG-LMF combines a shared latent reasoning graph, role-conditioned memory composi
 pip install -r KGLMF/runtime/requirements.txt
 ```
 
-## Main experiment
+## Quick Start
 
-Download the model, encoder and benchmark data separately. Include public evidence in question inputs and reserve reference answers and tests for scoring.
+Run KG-LMF on a benchmark with online memory learning.
 
 ```bash
 python -m KGLMF.experiments.configure --model /path/to/model --encoder /path/to/encoder --output runs/config.json
@@ -21,10 +21,6 @@ python -m KGLMF.experiments.run_main run --config runs/config.json --manifest ru
 python -m KGLMF.experiments.summarize --output runs/strategyqa-42
 ```
 
-Use a separate output directory for each benchmark and seed. Add `--resume` to resume the same run. Code evaluation requires Docker with the official tests' dependencies.
+## Code
 
-`KGLMF/experiments/` contains experiment scripts; `KGLMF/runtime/` contains their shared implementation.
-
-```bash
-python -m pytest KGLMF/runtime/tests -q
-```
+`KGLMF/src/` contains modules for agents, graph memory, routing, memory composition, injection, and graph evolution.
