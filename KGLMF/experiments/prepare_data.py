@@ -1,7 +1,7 @@
 """Freeze one benchmark's deduplicated input sequence."""
 import argparse
-from KGLMF.runtime.online_protocol import prepare_stream
-from KGLMF.runtime.protocol import DATASETS
+from KGLMF.src.data.streams import prepare_stream
+from KGLMF.src.data.protocol import DATASETS
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)

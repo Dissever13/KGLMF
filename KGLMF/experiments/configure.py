@@ -1,8 +1,8 @@
 """Write main-experiment settings for local model paths."""
 import argparse
 from copy import deepcopy
-from KGLMF.runtime.default_config import DEFAULT_CONFIG
-from KGLMF.runtime.protocol import write_json
+from KGLMF.src.config.defaults import DEFAULT_CONFIG
+from KGLMF.src.data.protocol import write_json
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)

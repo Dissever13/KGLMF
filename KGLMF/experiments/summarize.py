@@ -1,7 +1,7 @@
 """Summarize a completed main experiment."""
 import argparse
 import json
-from KGLMF.runtime.benchmark import summarize
+from KGLMF.src.execution.benchmark import summarize
 
 if __name__ == '__main__':
     p = argparse.ArgumentParser(description=__doc__)

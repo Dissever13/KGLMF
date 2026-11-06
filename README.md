@@ -7,7 +7,7 @@ KG-LMF combines a shared latent reasoning graph, role-conditioned memory composi
 ## Installation
 
 ```bash
-pip install -r KGLMF/runtime/requirements.txt
+pip install -r requirements.txt
 ```
 
 ## Quick Start
@@ -23,4 +23,13 @@ python -m KGLMF.experiments.summarize --output runs/strategyqa-42
 
 ## Code
 
-`KGLMF/src/` contains modules for agents, graph memory, routing, memory composition, injection, and graph evolution.
+`KGLMF/src/` contains the implementation used by the experiments:
+
+- `agents/`: agent orchestration and prompts.
+- `graph/`: typed nodes, weighted relations, and graph storage.
+- `router/`: relevance scoring and graph propagation.
+- `composer/`: memory writing and role-conditioned composition.
+- `injection/`: memory alignment and gated prefix injection.
+- `evolution/`: Capsule construction, memory merging, pruning, and representation updates.
+
+Model loading, data preparation, learning, evaluation, and experiment execution are organized in the corresponding supporting modules under `src/`.
