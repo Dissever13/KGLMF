@@ -7,13 +7,13 @@ import pytest
 import torch
 from torch import nn
 
-from KGLMF.experiments.kbs.memory import LatentMemory, MemoryGraph
-from KGLMF.experiments.kbs.protocol import (digest, prepare_manifest, validate_manifest,
+from KGLMF.runtime.memory import LatentMemory, MemoryGraph
+from KGLMF.runtime.protocol import (digest, prepare_manifest, validate_manifest,
     score_answer, choice_gold, write_json, bootstrap_mean, VERSION)
-from KGLMF.experiments.kbs.backend import HFBackend, completion_ids
-from KGLMF.experiments.kbs.runner import choose_budget, restrict_graph, predict
-from KGLMF.experiments.kbs.reporting import import_scores
-from KGLMF.experiments.kbs.recover_sources import convert
+from KGLMF.runtime.backend import HFBackend, completion_ids
+from KGLMF.runtime.runner import choose_budget, restrict_graph, predict
+from KGLMF.runtime.reporting import import_scores
+from KGLMF.runtime.recover_sources import convert
 
 
 def graph_fixture():
@@ -228,10 +228,10 @@ def test_prediction_updates_use_no_gold_and_counts_all_calls():
 
 
 def test_runner_roundtrip_and_paired_aggregation_with_toy_backend(tmp_path,monkeypatch):
-    from KGLMF.experiments.kbs.create_configs import example_config
-    from KGLMF.experiments.kbs.runner import evaluate
-    from KGLMF.experiments.kbs.reporting import aggregate
-    import KGLMF.experiments.kbs.backend as backend_module
+    from KGLMF.runtime.create_configs import example_config
+    from KGLMF.runtime.runner import evaluate
+    from KGLMF.runtime.reporting import aggregate
+    import KGLMF.runtime.backend as backend_module
     monkeypatch.setattr(backend_module,"HFBackend",FakeBackend)
     write_json(tmp_path/"strategyqa_real.json",[{"question":f"q{i}","answer":False,"source_revision":"toy"} for i in range(20)])
     manifest=prepare_manifest(tmp_path,tmp_path/"manifest.json",["strategyqa"])
@@ -245,7 +245,7 @@ def test_runner_roundtrip_and_paired_aggregation_with_toy_backend(tmp_path,monke
     for row in manifest["samples"]:
         if row["split"]=="train":
             graph.add(FakeBackend().encode(row["question"]),[row["id"]],row["domain"],"reference")
-    from KGLMF.experiments.kbs.runner import make_memory
+    from KGLMF.runtime.runner import make_memory
     module=make_memory(FakeBackend(),config["memory"])
     checkpoint=tmp_path/"toy.pt"
     torch.save(dict(version=VERSION,stage="trained",manifest_sha256=manifest["sha256"],seed=42,
@@ -261,7 +261,7 @@ def test_runner_roundtrip_and_paired_aggregation_with_toy_backend(tmp_path,monke
 
 
 def test_bigcode_hash_export_import(tmp_path):
-    from KGLMF.experiments.kbs.harness import bigcode_export,bigcode_import
+    from KGLMF.runtime.harness import bigcode_export,bigcode_import
     task=dict(id="x",dataset="bigcodebench",prediction="```python\ndef task_func(): return 1\n```",
               prediction_sha256="predhash",raw={"task_id":"BigCodeBench/1","test":"test","entry_point":"task_func"})
     write_json(tmp_path/"export.json",[task])
@@ -274,7 +274,7 @@ def test_bigcode_hash_export_import(tmp_path):
 
 def test_degree_preserving_random_graph():
     from collections import Counter
-    from KGLMF.experiments.kbs.graph_analysis import randomized_edges,summarize_graph
+    from KGLMF.runtime.graph_analysis import randomized_edges,summarize_graph
     edges={tuple(sorted((str(i),str((i+1)%12)))) for i in range(12)}
     shuffled,swaps=randomized_edges(edges,42)
     assert swaps>0 and Counter(v for e in edges for v in e)==Counter(v for e in shuffled for v in e)

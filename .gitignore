@@ -51,3 +51,5 @@ KGLMF/experiments/kbs/runs/
 *.pt
 *.safetensors
 runs/
+
+!KGLMF/runtime/requirements.txt

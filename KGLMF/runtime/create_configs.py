@@ -20,7 +20,7 @@ def example_config(model):
         "controller":{"min_tokens":12,"max_tokens":32,"rule":"floor_dev_max_entropy"},
         "training":{"epochs":3,"learning_rate":.0001,"k":4,"budget":16,"budgets":[12,16,24,32],
                     "gradient_clip":1.,"l2":.0001,"cost_weight":.001,"batch_size":1},
-        "scoring":{"command":[sys.executable,"-m","KGLMF.experiments.kbs.grader","--image","kglmf-evaluator:1"],"timeout_seconds":180},
+        "scoring":{"command":[sys.executable,"-m","KGLMF.runtime.grader","--image","kglmf-evaluator:1"],"timeout_seconds":180},
         "probe_interval":20,
         "suite_domains":{"ablation":["reasoning","math","science","code"],
                          "budget":["reasoning","math","science"],

@@ -6,11 +6,11 @@ import pytest
 import torch
 from torch import nn
 
-from KGLMF.experiments.kbs.memory import LatentMemory, MemoryGraph, refresh_graph
-from KGLMF.experiments.kbs.protocol import prepare_manifest, write_json, digest, provenance_ids, VERSION
-from KGLMF.experiments.kbs.runner import choose_budget,build_graph,make_memory
-from KGLMF.experiments.kbs.training import round_robin,feedback_pairs,TaskScorer
-from KGLMF.experiments.kbs.create_configs import example_config
+from KGLMF.runtime.memory import LatentMemory, MemoryGraph, refresh_graph
+from KGLMF.runtime.protocol import prepare_manifest, write_json, digest, provenance_ids, VERSION
+from KGLMF.runtime.runner import choose_budget,build_graph,make_memory
+from KGLMF.runtime.training import round_robin,feedback_pairs,TaskScorer
+from KGLMF.runtime.create_configs import example_config
 from .test_protocol import FakeBackend
 
 
@@ -183,9 +183,9 @@ def test_round_robin_interleaves_domains_and_missing_external_score_fails():
 
 @pytest.mark.parametrize("freeze_adapter",[False,True])
 def test_complete_staged_pipeline_with_tiny_frozen_backend(tmp_path,monkeypatch,freeze_adapter):
-    from KGLMF.experiments.kbs.training import initialize,collect_feedback,train,finalize
-    from KGLMF.experiments.kbs.runner import calibrate,evaluate
-    import KGLMF.experiments.kbs.backend as backend_module
+    from KGLMF.runtime.training import initialize,collect_feedback,train,finalize
+    from KGLMF.runtime.runner import calibrate,evaluate
+    import KGLMF.runtime.backend as backend_module
     class TinyBackend(FakeBackend):
         def __init__(self,*args,**kwargs):
             self.model = nn.Linear(12,3).requires_grad_(False)
@@ -219,7 +219,7 @@ def test_complete_staged_pipeline_with_tiny_frozen_backend(tmp_path,monkeypatch,
 
 
 def test_embedding_scale_is_equal_for_text_and_continuous_prefix():
-    from KGLMF.experiments.kbs.backend import HFBackend
+    from KGLMF.runtime.backend import HFBackend
     class ScaledEmbedding(nn.Embedding):
         embed_scale = 3.
         def forward(self,ids):

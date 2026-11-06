@@ -7,13 +7,13 @@ import pytest
 import torch
 from torch import nn
 
-from KGLMF.experiments.kbs.online_protocol import (prepare_stream, prediction_view, example_config,
+from KGLMF.runtime.online_protocol import (prepare_stream, prediction_view, example_config,
                                                  validate_manifest, validate_config, VERSION)
-from KGLMF.experiments.kbs.online import OnlineEngine, records
-from KGLMF.experiments.kbs.online_runner import run_stream, run, output_lock
-from KGLMF.experiments.kbs.memory import MemoryGraph, encoded_node, refresh_graph
-from KGLMF.experiments.kbs.protocol import digest, write_json, DATASETS
-from KGLMF.experiments.kbs.reporting import aggregate
+from KGLMF.runtime.online import OnlineEngine, records
+from KGLMF.runtime.online_runner import run_stream, run, output_lock
+from KGLMF.runtime.memory import MemoryGraph, encoded_node, refresh_graph
+from KGLMF.runtime.protocol import digest, write_json, DATASETS
+from KGLMF.runtime.reporting import aggregate
 
 
 class Tokenizer:
@@ -270,7 +270,7 @@ def test_condition_and_category_reset_and_online_aggregation(tmp_path):
     assert all(records(tmp_path / 'run' / (name + '.jsonl'))[0]['graph_before']['types'] == {'role': 3}
                for name in ('none_single', 'kg_multi'))
     assert validate_config(c)['feedback'] == 'internal_and_post_answer_benchmark'
-    from KGLMF.experiments.kbs.online_analysis import curves
+    from KGLMF.runtime.online_analysis import curves
     time_report = curves([tmp_path / 'run'], tmp_path / 'curves.json', window=2)
     assert len(time_report['curves']) == 4
     kg = [r for r in time_report['curves'] if r['condition'] == 'kg_multi']
@@ -295,7 +295,7 @@ def test_output_lock_rejects_concurrent_writer_and_releases(tmp_path):
 
 
 def test_resume_repairs_committed_checkpoint_before_result_append(tmp_path, monkeypatch):
-    import KGLMF.experiments.kbs.online_runner as runner
+    import KGLMF.runtime.online_runner as runner
     c, rows = config(), [row(0), row(1)]
     engine = OnlineEngine(ToyBackend(), c, c['suites']['main'][-1], 42, Scorer())
     original = runner.append_record
@@ -368,7 +368,7 @@ def test_transfer_runner_builds_sources_and_three_causal_target_streams(tmp_path
 
 
 def test_online_external_import_checks_history_not_just_prediction_ids(tmp_path):
-    from KGLMF.experiments.kbs.online_external import import_online_external, REQUIRED_COST
+    from KGLMF.runtime.online_external import import_online_external, REQUIRED_COST
     write_json(tmp_path / 'strategyqa_real.json', [dict(id=str(i), question=f'question {i}', answer=True, source_revision='toy') for i in range(2)])
     m = prepare_stream(tmp_path, tmp_path / 'm.json', ['strategyqa'])
     ids = m['streams']['reasoning']

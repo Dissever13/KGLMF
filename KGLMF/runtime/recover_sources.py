@@ -1,7 +1,7 @@
 """Normalize ORIGINAL official JSON exports without evaluating any model.
 
 Examples (download/export source data separately with its license):
-python -m KGLMF.experiments.kbs.recover_sources --dataset gpqa --input original.json --output gpqa_real.json --revision COMMIT
+python -m KGLMF.runtime.recover_sources --dataset gpqa --input original.json --output gpqa_real.json --revision COMMIT
 
 This never attempts to reconstruct missing answer options/tests from legacy Q/A.
 The manifest generator intentionally labels the later resplit a LOCAL protocol.

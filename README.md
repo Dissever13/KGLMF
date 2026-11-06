@@ -2,26 +2,29 @@
 
 **KG-LMF: Online Latent Graph Memory for Multi-Agent Reasoning**
 
-KG-LMF retrieves related experience from a shared latent graph and composes a continuous memory prefix for each requesting agent. A frozen language model performs reasoning; memory modules learn from feedback after the first answer has been saved and scored.
+KG-LMF combines a shared latent reasoning graph, role-conditioned memory composition, and adaptive memory budgets for multi-agent reasoning.
 
-## Start here
-
-Use Python 3.10 or later. Install a CUDA-compatible PyTorch build for real-model inference, then install the remaining dependencies:
+## Installation
 
 ```bash
-python -m pip install -r KGLMF/experiments/kbs/requirements.txt
-python -m KGLMF.experiments.kbs.benchmark --help
-python -m pytest KGLMF/experiments/kbs/tests -q
+pip install -r KGLMF/runtime/requirements.txt
 ```
 
-The [experiment guide](KGLMF/experiments/kbs/README.md) describes the portable single-benchmark entry point, inputs, checkpoints and scoring. The [version notes](KGLMF/experiments/kbs/EXPERIMENTS.md) distinguish it from historical mixed-stream experiment drivers.
+## Main experiment
 
-## Repository contents
+Download the model, encoder and benchmark data separately. Include public evidence in question inputs and reserve reference answers and tests for scoring.
 
-- `KGLMF/experiments/kbs/`: engine, graph and memory modules, grading, entry points, configurations and CPU software tests.
-- `KGLMF/experiments/kbs/prompt_resources.py`: domain and role prompts, available without a manuscript checkout.
-- `KGLMF/src/` and `KGLMF/experiments/scripts/`: earlier implementations retained for history; not the current aligned entry point.
+```bash
+python -m KGLMF.experiments.configure --model /path/to/model --encoder /path/to/encoder --output runs/config.json
+python -m KGLMF.experiments.prepare_data --data-dir /path/to/data --dataset strategyqa --output runs/manifest.json
+python -m KGLMF.experiments.run_main run --config runs/config.json --manifest runs/manifest.json --seed 42 --output runs/strategyqa-42
+python -m KGLMF.experiments.summarize --output runs/strategyqa-42
+```
 
-Model weights, benchmark files, journals, checkpoints, manuscript sources, figures and unpublished results are not included. Obtain each dataset under its own terms and preserve its source revision. No benchmark score is claimed by synthetic tests or the example configuration.
+Use a separate output directory for each benchmark and seed. Add `--resume` to resume the same run. Code evaluation requires Docker with the official tests' dependencies.
 
-The local aligned backend does not require an API key. The legacy DeepSeek adapter reads `DEEPSEEK_API_KEY` from the environment; no credential belongs in a source file.
+`KGLMF/experiments/` contains experiment scripts; `KGLMF/runtime/` contains their shared implementation.
+
+```bash
+python -m pytest KGLMF/runtime/tests -q
+```

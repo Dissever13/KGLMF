@@ -3,12 +3,12 @@ import copy
 from pathlib import Path
 import pytest
 import torch
-from KGLMF.experiments.kbs.temporal_memory import TemporalGraph, TemporalMemory
-from KGLMF.experiments.kbs.temporal_engine import TemporalEngine
-from KGLMF.experiments.kbs.memory import encoded_node, refresh_graph
-from KGLMF.experiments.kbs.online_runner import run_stream
-from KGLMF.experiments.kbs.online import records
-from KGLMF.experiments.kbs.protocol import read_json, score_answer
+from KGLMF.runtime.temporal_memory import TemporalGraph, TemporalMemory
+from KGLMF.runtime.temporal_engine import TemporalEngine
+from KGLMF.runtime.memory import encoded_node, refresh_graph
+from KGLMF.runtime.online_runner import run_stream
+from KGLMF.runtime.online import records
+from KGLMF.runtime.protocol import read_json, score_answer
 from ..prompt_resources import domain_prompts
 from .test_online import ToyBackend, Scorer, config, row, identity
 
@@ -138,7 +138,7 @@ def test_feedback_and_answer_survive_trajectory_encoding_budget():
 def test_temporal_prompt_ends_with_metric_contract_without_gold():
     engine=object.__new__(TemporalEngine)
     engine.prompts=domain_prompts()
-    from KGLMF.experiments.kbs.online_protocol import prediction_view
+    from KGLMF.runtime.online_protocol import prediction_view
     prompt=engine.build_prompt(prediction_view(row(1)),'critic','A previous proposal')
     assert prompt.index('Previous agents:')<prompt.index('Your response format:')
     assert 'exactly yes or no' in prompt and 'SECRET_IMPLEMENTATION' not in prompt
