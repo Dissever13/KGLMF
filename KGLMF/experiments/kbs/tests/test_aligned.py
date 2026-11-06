@@ -47,16 +47,18 @@ def test_two_line_reviews_are_not_penalized_for_missing_explanation():
     with pytest.raises(ValueError):review_consistency('VERDICT: ACCEPT',None)
 
 
-def test_tail_logits_exactly_match_masked_causal_loss_and_gradients():
-    logits=torch.randn(1,9,11,requires_grad=True)
+@pytest.mark.parametrize('seed', [0, 1, 42, 43])
+def test_tail_logits_match_masked_causal_loss_and_gradients(seed):
+    logits=torch.randn(1,9,11,generator=torch.Generator().manual_seed(seed),requires_grad=True)
     gold=torch.tensor([[2,4,6]])
     labels=torch.full((1,9),-100,dtype=torch.long);labels[:,-3:]=gold
     full=torch.nn.functional.cross_entropy(logits[:,:-1].reshape(-1,11),labels[:,1:].reshape(-1))
     tail=target_only_nll(logits[:,-4:],gold)
-    assert torch.equal(full,tail)
+    # Different reduction shapes can differ by one float32 rounding step.
+    torch.testing.assert_close(full,tail,rtol=1e-6,atol=1e-7)
     a=torch.autograd.grad(full,logits,retain_graph=True)[0]
     b=torch.autograd.grad(tail,logits)[0]
-    assert torch.equal(a,b)
+    torch.testing.assert_close(a,b,rtol=1e-6,atol=1e-7)
 
 
 def test_public_evidence_does_not_expose_gold_support_labels():

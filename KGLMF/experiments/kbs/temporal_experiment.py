@@ -3,6 +3,7 @@
 prepare creates an auditable local-export manifest. run uses a real frozen HF
 backbone and online memory training. export reads completed journals only.
 """
+from .prompt_resources import domain_prompts, role_templates
 import argparse
 import copy
 import hashlib
@@ -44,7 +45,7 @@ def prepare(output, per_dataset_limit=150):
     config['memory'].pop('edge_coefficients',None)
     config.update(method_revision=REVISION,total_episodes=2*per_dataset_limit,per_node_feedback_probes=False,
                   repetition_count=1,order_seed=42,window=50,
-                  domain_prompts=read_json(ROOT/'paper'/'kbs_revision_2026-10-09'/'domain_prompts.json'))
+                  domain_prompts=domain_prompts())
     full=next(c for c in config['suites']['main'] if c['name']=='kg_multi')
     none=next(c for c in config['suites']['main'] if c['name']=='none_multi')
     config['suites']={'graph_analysis':[full,none]}

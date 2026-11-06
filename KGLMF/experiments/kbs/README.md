@@ -1,29 +1,43 @@
-# KG-LMF 实验代码
+# Online KG-LMF experiments
 
-2026-10-30：结构成本为组合 token 预算、活跃节点数与活跃边数之和，两个权重均固定为 1。
-实现定义、版本兼容性和测试说明见 [STRUCTURAL_COST.md](STRUCTURAL_COST.md)。
-此变更未重跑基准；历史结果不可按新的成本定义重新解释。
+Run commands from the repository root. The portable `benchmark` module uses `AlignedEngine`, domain-specific prompts and the existing durable journal runner. One invocation evaluates one benchmark, one condition and one seed. Every new output directory starts with fresh graph, memory parameters and optimizer state. Do not point it at a historical run directory.
 
-当前入口实现论文的逐题在线协议（`kbs-online-v3`）：同一任务领域共享连续问题流；从空经验图开始，先保存答案，再评分、训练和写图。所有基准均使用内部反馈与允许的题后基准反馈。
+## Inputs
 
-在仓库根目录执行：
+Download model weights and data separately. Normalize exports to `protocol.py` and `online_protocol.py`; preserve original IDs, source revisions, answer aliases, options and choice labels. Code tests are available only to the scorer. Never insert references or solutions into questions.
+
+`prediction_view` sends only the public question and options to agents. For evidence-based tasks, pack public evidence into the question before preparing the manifest. This loader does not fetch documents or recover evidence from private answer fields. `aligned_data.evidence_text` provides the historical label-independent 1800-token HotpotQA paragraph packer. Record truncation and evidence budgets alongside your input export.
 
 ```bash
-python -m pip install -r KGLMF/experiments/kbs/requirements.txt
-python -m KGLMF.run_kbs prepare --data-dir RECOVERED --output runs/online/manifest.json
-python -m KGLMF.run_kbs check --config KGLMF/experiments/kbs/configs/qwen.json --manifest runs/online/manifest.json
-python -m KGLMF.run_kbs run --config KGLMF/experiments/kbs/configs/qwen.json --manifest runs/online/manifest.json --suite main --seed 42 --output runs/online/qwen-main-42
+python -m KGLMF.run_kbs prepare --data-dir /path/to/normalized-data --datasets strategyqa --seed 42 --output runs/strategyqa/manifest.json
 ```
 
-先在配置中填写本地模型路径和版本。数据需保留来源版本、题目ID、选项及代码测试；代码/数学评分器需提前配置。代码参考实现和隐藏测试不进入代理提示或记忆。
+Preparation uses the existing manifest format. Supplying one benchmark makes its single stream the benchmark reset boundary. The portable runner rejects multi-benchmark manifests. The order stays fixed when the subsequent run seed changes. Use `--limit N` only for a declared subset, never to replace difficult or failed questions.
 
-`--suite` 可选 `main`、`ablation`、`budget`、`sensitivity`、`transfer`、`stream`。同一实验用相同问题清单，按配置的独立种子分别运行。中断后用原命令加 `--resume`；不要复用旧离线 checkpoint。
+## Configure and run
 
-汇总：
+Copy `configs/aligned_qwen.json` and set your model/encoder paths, immutable revisions when applicable, and scorer environment. The example uses K=4, eight propagation rounds, 16 stored tokens per node, composition budgets between 12 and 32, and fixed structural-cost coefficients of one. It is not a completed run record.
 
 ```bash
-python -m KGLMF.run_kbs summarize --runs runs/online/qwen-main-42 runs/online/qwen-main-43 runs/online/qwen-main-44 --output runs/online/summary.json
+python -m KGLMF.experiments.kbs.benchmark check --config /path/to/config.json --manifest runs/strategyqa/manifest.json --seed 42
+python -m KGLMF.experiments.kbs.benchmark run --config /path/to/config.json --manifest runs/strategyqa/manifest.json --seed 42 --output runs/strategyqa/seed42
+```
+
+`check` validates inputs and bindings without loading a model. Only `run` starts inference. Repeat with seeds 43 and 44 in separate output directories for variability. Other benchmarks require new directories and their own manifests; state never carries between them.
+
+## Scoring
+
+Math uses Math-Verify. Generated programs run in Docker without network, host mounts or GPUs. Build `evaluator/Dockerfile` and provide the dependencies required by official source tests. Validate reference programs and negative controls before a run. Missing image dependencies are infrastructure failures, not incorrect answers.
+
+The example selects `source_grader`, adding the source `solution` module alias, a `/tmp` working directory, source stdin/stdout test cases and bounded Python diagnostic capture. Verdicts identify the immutable image and worker hash. Private evaluator images and dataset-specific assets are not included. Keep the evaluator and dependencies fixed during a run.
+
+## Resume and results
+
+Resume the identical invocation with `--resume`. Sources, configuration, manifest, seed and resolved models must match. Source snapshots and checkpoint identities prevent silent version mixing. Answers are fsynced before scoring or feedback. Feedback binds to the saved prediction and pre-update state. A completed run is only summarized on resume.
+
+```bash
+python -m KGLMF.experiments.kbs.benchmark summarize --output runs/strategyqa/seed42
 python -m pytest KGLMF/experiments/kbs/tests -q
 ```
 
-详细协议、转移定义及其他实验命令见 [EXPERIMENTS.md](EXPERIMENTS.md)。旧离线流程仅保留作历史代码，默认入口不再使用。此版本未运行真实实验。
+Summaries separate inference text tokens from feedback text tokens and include scoring, feedback, training and maintenance in total latency. A single seed yields no SD or confidence interval. Latent positions are not silently counted as text tokens. Preserve full journals for further breakdown and independent audit.

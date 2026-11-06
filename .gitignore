@@ -40,3 +40,14 @@ KGLMF/experiments/kbs/runs/
 
 # Conda/pip
 *.egg-info/
+
+# Local credentials and unpublished artifacts
+.env
+.env.*
+*.pem
+*.key
+*.docx
+*.zip
+*.pt
+*.safetensors
+runs/

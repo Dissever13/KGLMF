@@ -3,6 +3,7 @@
 No results from the small ablation pilot are publication results. Importing this
 module does not load a model, alter a run, or launch inference.
 """
+from .prompt_resources import domain_prompts, role_templates
 import argparse
 import copy
 import hashlib
@@ -34,7 +35,7 @@ def prepare(output):
         raise FileExistsError('Use a new, declared run directory')
     old=PACKAGE/'runs/temporal_2026-10-16_v2'
     config=read_json(old/'config.json')
-    template=read_json(PROJECT/'paper/kbs_revision_2026-10-09/domain_role_templates.json')
+    template=role_templates()
     out.mkdir(parents=True)
     temporal=out/'temporal';temporal.mkdir()
     # Exact same examples, IDs, order and source-file hashes as the completed v2.

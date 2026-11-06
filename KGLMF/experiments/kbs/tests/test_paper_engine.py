@@ -6,6 +6,7 @@ from .test_temporal import Backend
 from .test_online import config, row, Scorer, identity
 from ..paper_engine import PaperEngine, ROLE_IDS, ablation_conditions
 from ..protocol import read_json
+from ..prompt_resources import domain_prompts, role_templates
 from ..online_protocol import prediction_view
 from ..online_runner import run_stream
 from ..online import records
@@ -13,10 +14,9 @@ from ..online import records
 
 def settings(domain='reasoning'):
     c=config()
-    paper=Path(__file__).resolve().parents[3]/'paper/kbs_revision_2026-10-09'
     c.update(active_domain=domain,total_episodes=3,per_node_feedback_probes=False,
-             role_templates=read_json(paper/'domain_role_templates.json'),
-             domain_prompts=read_json(paper/'domain_prompts.json'))
+             role_templates=role_templates(),
+             domain_prompts=domain_prompts())
     return c
 
 

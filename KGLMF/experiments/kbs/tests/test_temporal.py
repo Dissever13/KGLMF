@@ -9,6 +9,7 @@ from KGLMF.experiments.kbs.memory import encoded_node, refresh_graph
 from KGLMF.experiments.kbs.online_runner import run_stream
 from KGLMF.experiments.kbs.online import records
 from KGLMF.experiments.kbs.protocol import read_json, score_answer
+from ..prompt_resources import domain_prompts
 from .test_online import ToyBackend, Scorer, config, row, identity
 
 
@@ -86,7 +87,7 @@ class Backend(ToyBackend):
 
 def test_temporal_engine_journal_resume_and_preanswer_trace(tmp_path):
     c=config();c.update(total_episodes=3,per_node_feedback_probes=False)
-    c['domain_prompts']=read_json(Path(__file__).resolve().parents[3]/'paper'/'kbs_revision_2026-10-09'/'domain_prompts.json')
+    c['domain_prompts']=domain_prompts()
     rows=[row(i) for i in range(3)]
     backend=Backend();condition=c['suites']['main'][-1]
     e=TemporalEngine(backend,c,condition,42,Scorer(tmp_path/'answers.jsonl'))
@@ -136,7 +137,7 @@ def test_feedback_and_answer_survive_trajectory_encoding_budget():
 
 def test_temporal_prompt_ends_with_metric_contract_without_gold():
     engine=object.__new__(TemporalEngine)
-    engine.prompts=read_json(Path(__file__).resolve().parents[3]/'paper'/'kbs_revision_2026-10-09'/'domain_prompts.json')
+    engine.prompts=domain_prompts()
     from KGLMF.experiments.kbs.online_protocol import prediction_view
     prompt=engine.build_prompt(prediction_view(row(1)),'critic','A previous proposal')
     assert prompt.index('Previous agents:')<prompt.index('Your response format:')
