@@ -32,4 +32,3 @@ python -m KGLMF.experiments.summarize --output runs/strategyqa-42
 - `injection/`: memory alignment and gated prefix injection.
 - `evolution/`: Capsule construction, memory merging, pruning, and representation updates.
 
-Model loading, data preparation, learning, evaluation, and experiment execution are organized in the corresponding supporting modules under `src/`.
