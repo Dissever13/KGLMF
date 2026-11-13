@@ -1,8 +1,4 @@
-# Install a CUDA-compatible PyTorch build before this file when using a GPU.
 torch>=2.5.1
-# This is the locally verified version exposing both backbone model classes.
 transformers==5.12.1
-# Required for mathematical answer scoring; its version is logged per verdict.
 math-verify
-# CPU synthetic method/protocol checks; no benchmark run is started by pytest.
 pytest>=8.0
